@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 
 st.set_page_config(page_title="BTC AI Trader V1.2", page_icon="₿", layout="wide")
 
-SPOT="https://api.binance.com"
+SPOT="https://data-api.binance.vision"
 FUT="https://fapi.binance.com"
 TIMEOUT=15
 
