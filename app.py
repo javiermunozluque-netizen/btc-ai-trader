@@ -296,7 +296,6 @@ symbol=st.sidebar.selectbox("Símbolo",["BTCUSDT"])
 if st.sidebar.button("Actualizar ahora"):
     st.cache_data.clear()
 
-@st.fragment(run_every="30s")
 def live_dashboard():
   try:
     live_ticker=get_json(SPOT+"/api/v3/ticker/price", {"symbol":symbol})
@@ -341,6 +340,7 @@ def live_dashboard():
     chart=d1.set_index("open_time")[["close","ema55","ema200"]].tail(240)
     st.line_chart(chart)
     st.subheader("Validación cuantitativa · V1.6")
+    st.caption("La actualización automática se ha desactivado durante los análisis para evitar interrupciones. Espera a que termine el cálculo.")
     st.write("Validación cronológica: el tramo inicial sirve para comparar umbrales; el último 30% se reserva como prueba fuera de muestra (OOS). El umbral se selecciona solo con el tramo de desarrollo, nunca con los resultados OOS. Modelo 1H simplificado; no replica exactamente la señal en vivo.")
     b1,b2,b3,b4=st.columns(4)
     fee_bps=b1.number_input("Comisión por lado (pb)",min_value=0.0,max_value=100.0,value=6.0,step=1.0,key="bt_fee_bps")
@@ -349,7 +349,7 @@ def live_dashboard():
     max_hold=b4.number_input("Máx. duración (velas 1H)",min_value=1,max_value=240,value=48,step=1,key="bt_max_hold")
     if st.button("Ejecutar validación V1.6",key="run_backtest_v14"):
         try:
-            with st.spinner("Descargando histórico y calculando…"):
+            with st.spinner("Descargando hasta 12.000 velas recientes y calculando métricas. Puede tardar un poco…"):
                 end=int(datetime.now(timezone.utc).timestamp()*1000)
                 start=int((datetime.now(timezone.utc)-timedelta(days=365*5)).timestamp()*1000)
                 hist=paginate_klines(symbol,"1h",start,end,12000)
@@ -387,6 +387,7 @@ def live_dashboard():
         bt=st.session_state["bt_results"]
         split=st.session_state.get("bt_split",0)
         st.caption(f"Histórico analizado: {st.session_state.get('bt_history_count',0):,} velas 1H · desarrollo: {split:,} velas (70%) · prueba OOS: {st.session_state.get('bt_history_count',0)-split:,} velas (30%). Se usan las últimas 12.000 velas disponibles, no las primeras desde la fecha inicial.")
+        st.success("Validación completada correctamente.")
         st.markdown("#### 1 · Desarrollo — comparación de umbrales")
         st.dataframe(bt.style.format({"Win rate %":"{:.1f}","Profit factor":"{:.2f}","Expectancy R":"{:.3f}","Net R":"{:.2f}","Max DD %":"{:.1f}","Net return %":"{:.1f}"}),use_container_width=True)
         if "bt_oos" in st.session_state:
@@ -410,7 +411,7 @@ def live_dashboard():
     st.write("Auditoría por operación y comparación de filtros. Se usa un umbral fijo de 7 para comparar los filtros de forma homogénea. El tramo OOS queda reservado para evaluar el filtro seleccionado en desarrollo; como se prueban varias alternativas, el resultado sigue siendo exploratorio.")
     if st.button("Ejecutar diagnóstico V1.6",key="run_diagnostic_v16"):
         try:
-            with st.spinner("Analizando operaciones y filtros…"):
+            with st.spinner("Analizando cinco filtros sobre el histórico reciente. Este cálculo puede tardar más de un minuto…"):
                 end2=int(datetime.now(timezone.utc).timestamp()*1000)
                 start2=int((datetime.now(timezone.utc)-timedelta(days=365*5)).timestamp()*1000)
                 hist15=paginate_klines(symbol,"1h",start2,end2,12000)
@@ -446,6 +447,7 @@ def live_dashboard():
     if "diag_compare" in st.session_state:
         comp15=st.session_state["diag_compare"]
         st.caption(f"Histórico: {st.session_state.get('diag_count',0):,} velas 1H · desarrollo: {st.session_state.get('diag_cut',0):,} · OOS: {st.session_state.get('diag_count',0)-st.session_state.get('diag_cut',0):,}. Umbral fijo = 7.")
+        st.success("Diagnóstico completado correctamente.")
         st.markdown("#### Comparación de filtros — desarrollo")
         st.dataframe(comp15.style.format({"Win rate %":"{:.1f}","Profit factor":"{:.2f}","Expectancy R":"{:.3f}","Net R":"{:.2f}","Max DD %":"{:.1f}","Net return %":"{:.1f}"}),use_container_width=True)
         st.markdown("#### Evaluación fuera de muestra")
