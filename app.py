@@ -246,27 +246,38 @@ def live_dashboard():
     st.subheader("Backtest — V1.3")
     st.write("Diagnóstico histórico 1H, entrada en apertura siguiente, stop 1 ATR, objetivo 2 ATR, una posición cada vez y costes de entrada/salida. Si stop y objetivo se tocan en la misma vela, se cuenta primero el stop. No replica exactamente la señal en vivo ni predice rentabilidad futura.")
     b1,b2,b3,b4=st.columns(4)
-    fee_bps=b1.number_input("Comisión por lado (pb)",min_value=0.0,max_value=100.0,value=6.0,step=1.0)
-    slippage_bps=b2.number_input("Deslizamiento por lado (pb)",min_value=0.0,max_value=100.0,value=2.0,step=1.0)
-    risk_pct=b3.number_input("Riesgo por operación (%)",min_value=0.1,max_value=5.0,value=0.5,step=0.1)
-    max_hold=b4.number_input("Máx. duración (velas 1H)",min_value=1,max_value=240,value=48,step=1)
-    if st.button("Ejecutar backtest V1.3"):
-        with st.spinner("Descargando histórico y calculando…"):
-            end=int(datetime.now(timezone.utc).timestamp()*1000)
-            start=int((datetime.now(timezone.utc)-timedelta(days=365*5)).timestamp()*1000)
-            hist=paginate_klines(symbol,"1h",start,end,12000)
-            if hist.empty:
-                st.error("No se ha podido descargar histórico para el backtest.")
-            else:
-                st.caption(f"Histórico disponible: {len(hist):,} velas 1H (límite actual: 12.000 velas, aproximadamente 16 meses).")
-                res=[]
-                for th in [5,6,7]:
-                    row=backtest(hist,th,fee_bps,slippage_bps,risk_pct,int(max_hold))
-                    row["Umbral"]=th
-                    res.append(row)
-                bt=pd.DataFrame(res).set_index("Umbral")
-                st.dataframe(bt.style.format({"Win rate %":"{:.1f}","Profit factor":"{:.2f}","Expectancy R":"{:.3f}","Net R":"{:.2f}","Max DD %":"{:.2f}","Net return %":"{:.2f}"}),use_container_width=True)
-                st.download_button("Descargar resultados CSV",bt.reset_index().to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_backtest_v1_3.csv",mime="text/csv")
+    fee_bps=b1.number_input("Comisión por lado (pb)",min_value=0.0,max_value=100.0,value=6.0,step=1.0,key="bt_fee_bps")
+    slippage_bps=b2.number_input("Deslizamiento por lado (pb)",min_value=0.0,max_value=100.0,value=2.0,step=1.0,key="bt_slippage_bps")
+    risk_pct=b3.number_input("Riesgo por operación (%)",min_value=0.1,max_value=5.0,value=0.5,step=0.1,key="bt_risk_pct")
+    max_hold=b4.number_input("Máx. duración (velas 1H)",min_value=1,max_value=240,value=48,step=1,key="bt_max_hold")
+    if st.button("Ejecutar backtest V1.3",key="run_backtest_v13"):
+        try:
+            with st.spinner("Descargando histórico y calculando…"):
+                end=int(datetime.now(timezone.utc).timestamp()*1000)
+                start=int((datetime.now(timezone.utc)-timedelta(days=365*5)).timestamp()*1000)
+                hist=paginate_klines(symbol,"1h",start,end,12000)
+                if hist.empty:
+                    st.session_state["bt_error"]="Binance no ha devuelto velas históricas. Prueba de nuevo en unos minutos."
+                    st.session_state.pop("bt_results",None)
+                else:
+                    rows=[]
+                    for th in [5,6,7]:
+                        row=backtest(hist,th,fee_bps,slippage_bps,risk_pct,int(max_hold))
+                        row["Umbral"]=th
+                        rows.append(row)
+                    st.session_state["bt_results"]=pd.DataFrame(rows).set_index("Umbral")
+                    st.session_state["bt_history_count"]=len(hist)
+                    st.session_state.pop("bt_error",None)
+        except Exception as e:
+            st.session_state["bt_error"]=f"{type(e).__name__}: {e}"
+            st.session_state.pop("bt_results",None)
+    if st.session_state.get("bt_error"):
+        st.error("El backtest no ha podido terminar: "+st.session_state["bt_error"])
+    if "bt_results" in st.session_state:
+        bt=st.session_state["bt_results"]
+        st.caption(f"Histórico analizado: {st.session_state.get('bt_history_count',0):,} velas 1H. Límite actual: 12.000 velas, aproximadamente 16 meses.")
+        st.dataframe(bt,use_container_width=True)
+        st.download_button("Descargar resultados CSV",bt.reset_index().to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_backtest_v1_3.csv",mime="text/csv",key="download_backtest_v13")
   except Exception as e:
     st.error("No se pudieron cargar los datos. Comprueba la conexión o vuelve a actualizar.")
     st.caption(str(e))
