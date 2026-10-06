@@ -1,20 +1,22 @@
-# BTC AI Trader V1.2
+# BTC AI Trader V1.4
 
 ## Qué es
-Dashboard experimental para BTC/USDT con datos públicos de Binance. No requiere claves de API y no ejecuta órdenes. La interfaz actualiza automáticamente cada 30 segundos mientras la página esté abierta.
+Dashboard experimental para BTC/USDT con datos públicos de Binance. No requiere claves de API, no conecta cuentas y no ejecuta órdenes. La interfaz se actualiza periódicamente mientras la página está abierta.
 
-Incluye:
-- Precio BTC consultado en vivo mediante API pública (refresco de 30 s)
-- BTC 1H/4H
-- EMA55/EMA200
-- RSI, ATR, volumen relativo
-- estructura HH/HL/LH/LL
-- Open Interest y funding
-- score técnico + derivados
-- LONG/SHORT/WAIT
-- entrada, stop, TP y R:R
-- gráfico
-- backtest inicial de 5 años para umbrales 6/7/8
+## Funciones
+- Cotización pública BTC/USDT y velas 1H/4H cerradas
+- EMA55/EMA200, RSI, ATR, volumen relativo y estructura HH/HL/LH/LL
+- Open Interest y funding como contexto de derivados
+- Score heurístico LONG/SHORT/WAIT y niveles ilustrativos de entrada, stop y objetivo
+- Gráfico de precio e indicadores
+- Backtest 1H con comisión y deslizamiento configurables
+- Validación cronológica V1.4: compara umbrales en el tramo inicial de desarrollo (70%) y evalúa el umbral seleccionado en el último 30% reservado fuera de muestra
+- Exportación CSV de las métricas de desarrollo y de la prueba OOS
+
+## Cómo interpretar la validación
+El umbral se elige por expectativa R en el tramo de desarrollo; la muestra OOS no se utiliza para elegirlo. Los indicadores se calculan sobre el histórico anterior disponible y el backtest OOS comienza en el punto de corte tras un periodo de calentamiento de 300 velas. Si la expectativa OOS es negativa o nula, el sistema no supera esa prueba.
+
+El histórico descargado está limitado a 12.000 velas de 1H (aproximadamente 16 meses), no a cinco años completos. La validación es un primer filtro, no una prueba definitiva: el modelo 1H no replica exactamente la señal multi-timeframe en vivo, y no incluye funding histórico por operación, liquidez, impacto de mercado ni calidad real de ejecución. La selección entre tres umbrales puede seguir sobreajustándose al tramo de desarrollo; conviene probar otros periodos y mercados antes de cualquier uso real.
 
 ## Ejecutar en ordenador
 ```bash
@@ -22,13 +24,8 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Después abre la URL local que indique Streamlit.
+## Publicar para iPhone
+Aloja la app en un servicio compatible con Streamlit (por ejemplo, Streamlit Community Cloud) y abre la URL desde Safari.
 
-## Publicarlo para iPhone
-La app debe alojarse en un servicio que ejecute Python/Streamlit (por ejemplo Streamlit Community Cloud, Render o similar). Una vez desplegada tendrás una URL que puedes abrir desde Safari.
-
-## Actualización en tiempo real
-La cotización se consulta en cada refresco y los indicadores se recalculan con velas de Binance. “Tiempo real” aquí significa actualización periódica, no feed tick-a-tick; la frecuencia efectiva depende del alojamiento, conexión y disponibilidad de Binance. Los datos de derivados pueden tener una frecuencia distinta.
-
-## Importante
-El backtest es una primera aproximación: no incluye slippage real, ejecución intrabar completa, funding histórico integrado en cada operación, liquidaciones históricas ni optimización walk-forward. Sirve para comparar rápidamente los umbrales, no para validar rentabilidad.
+## Datos y seguridad
+La cotización se actualiza periódicamente; no es un feed tick-a-tick. La disponibilidad de datos depende de Binance, la conexión y el alojamiento. Esta herramienta es experimental, no constituye asesoramiento financiero y no debe considerarse un sistema probado para operar con dinero real.
