@@ -5,7 +5,7 @@ import numpy as np
 import requests, time
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.5", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.6", page_icon="₿", layout="wide")
 
 st.markdown("""<style>
 .block-container{padding-top:1.6rem;padding-bottom:3rem;max-width:1500px}
@@ -41,8 +41,10 @@ def klines(symbol="BTCUSDT", interval="1h", limit=1000, start=None, end=None):
     return df[["open_time","open","high","low","close","volume","quote_volume","trades"]]
 
 def paginate_klines(symbol, interval, start_ms, end_ms, max_rows=12000):
-    out=[]; cur=start_ms
+    out=[]
     step={"1h":3600000,"4h":14400000}[interval]
+    # Use the recent edge of the requested window, not old candles first.
+    cur=max(int(start_ms),int(end_ms)-int(max_rows)*step)
     while cur < end_ms and sum(len(x) for x in out) < max_rows:
         batch=klines(symbol,interval,1000,cur,end_ms)
         if batch.empty: break
@@ -343,9 +345,8 @@ def live_dashboard():
                     cut=int(len(hist)*0.70)
                     development=hist.iloc[:cut].copy()
                     # Include a 300-candle warm-up before OOS, but start trading exactly at the split.
-                    warm=max(0,cut-300)
-                    test=hist.iloc[warm:].copy()
-                    start_test=cut-warm
+                    test=hist.copy()
+                    start_test=cut
                     rows=[]
                     for th in [5,6,7]:
                         row=backtest(development,th,fee_bps,slippage_bps,risk_pct,int(max_hold))
@@ -403,9 +404,8 @@ def live_dashboard():
                 else:
                     cut15=int(len(hist15)*0.70)
                     dev15=hist15.iloc[:cut15].copy()
-                    warm15=max(0,cut15-300)
-                    test15=hist15.iloc[warm15:].copy()
-                    start_oos15=cut15-warm15
+                    test15=hist15.copy()
+                    start_oos15=cut15
                     modes=["Base","EMA trend","Momentum","Volume","Structure"]
                     comparison=[]
                     for mode in modes:
