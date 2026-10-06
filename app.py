@@ -281,8 +281,15 @@ def backtest_diagnostic(df, threshold=7, filter_mode="Base", fee_bps=6, slippage
              "Max DD %":maxdd*100,"Net return %":(equity-1)*100}
     return (summary,pd.DataFrame(logs)) if return_trades else summary
 
-st.title("₿ BTC AI Trader")
-st.caption("V1.6  ·  Quant research terminal  ·  Datos públicos de Binance  ·  Sin conexión a cuentas ni ejecución de órdenes")
+st.markdown("""
+<div style="padding:22px 24px;margin:2px 0 16px;border:1px solid rgba(127,140,160,.22);border-radius:18px;background:linear-gradient(115deg,rgba(247,147,26,.12),rgba(127,140,160,.035) 52%,rgba(85,119,255,.08));">
+  <div style="font-size:.76rem;font-weight:750;letter-spacing:.14em;text-transform:uppercase;opacity:.72;margin-bottom:7px">QUANT RESEARCH · BTC / USDT</div>
+  <div style="font-size:clamp(1.8rem,4vw,2.7rem);font-weight:850;letter-spacing:-.055em;line-height:1.08">₿ BTC AI Trader <span style="color:#f7931a">/ V1.6</span></div>
+  <div style="margin-top:9px;font-size:.96rem;opacity:.82">Market intelligence · Technical signals · Out-of-sample diagnostics</div>
+  <div style="display:inline-block;margin-top:15px;padding:5px 10px;border:1px solid rgba(127,140,160,.28);border-radius:99px;font-size:.75rem;font-weight:650">● DATOS PÚBLICOS · SOLO ANÁLISIS · SIN EJECUCIÓN DE ÓRDENES</div>
+</div>
+""",unsafe_allow_html=True)
+st.caption("Terminal experimental de análisis cuantitativo. No conecta cuentas de exchange ni utiliza claves privadas.")
 st.info("Modo experimental: las señales son heurísticas. El backtest incorpora costes estimados y una prueba cronológica fuera de muestra, pero no demuestra rentabilidad futura.", icon="🧪")
 
 symbol=st.sidebar.selectbox("Símbolo",["BTCUSDT"])
@@ -353,7 +360,7 @@ def live_dashboard():
                 else:
                     cut=int(len(hist)*0.70)
                     development=hist.iloc[:cut].copy()
-                    # Include a 300-candle warm-up before OOS, but start trading exactly at the split.
+                    # Keep the full series for causal indicator warm-up; trade only after the split.
                     test=hist.copy()
                     start_test=cut
                     rows=[]
@@ -396,12 +403,12 @@ def live_dashboard():
             export_oos=st.session_state["bt_oos"].rename(columns={"Umbral seleccionado (solo desarrollo)":"Umbral"})
             export_oos["Segmento"]="Fuera de muestra"
             export=pd.concat([export,export_oos],ignore_index=True,sort=False)
-        st.download_button("Descargar informe CSV",export.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_6.csv",mime="text/csv",key="download_backtest_v14")
+        st.download_button("Descargar informe CSV",export.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_6.csv",mime="text/csv",key="download_backtest_v16")
 
     st.divider()
     st.subheader("Laboratorio de operaciones · V1.6")
     st.write("Auditoría por operación y comparación de filtros. Se usa un umbral fijo de 7 para comparar los filtros de forma homogénea. El tramo OOS queda reservado para evaluar el filtro seleccionado en desarrollo; como se prueban varias alternativas, el resultado sigue siendo exploratorio.")
-    if st.button("Ejecutar diagnóstico V1.6",key="run_diagnostic_v15"):
+    if st.button("Ejecutar diagnóstico V1.6",key="run_diagnostic_v16"):
         try:
             with st.spinner("Analizando operaciones y filtros…"):
                 end2=int(datetime.now(timezone.utc).timestamp()*1000)
@@ -455,7 +462,7 @@ def live_dashboard():
             t2.dataframe(st2.style.format({"Expectativa_R":"{:.3f}","R_neto":"{:.2f}"}),use_container_width=True)
             st.markdown("#### Registro detallado")
             st.dataframe(trades15,use_container_width=True)
-            st.download_button("Descargar operaciones OOS CSV",trades15.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_trades_v1_6.csv",mime="text/csv",key="download_trades_v15")
+            st.download_button("Descargar operaciones OOS CSV",trades15.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_trades_v1_6.csv",mime="text/csv",key="download_trades_v16")
         else:
             st.warning("No se generaron operaciones en el tramo OOS para este filtro.")
 
