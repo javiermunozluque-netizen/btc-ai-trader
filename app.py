@@ -5,7 +5,19 @@ import numpy as np
 import requests, time
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.3", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.4", page_icon="₿", layout="wide")
+
+st.markdown("""<style>
+.block-container{padding-top:1.6rem;padding-bottom:3rem;max-width:1500px}
+[data-testid="stMetric"]{background:linear-gradient(135deg,rgba(70,85,110,.12),rgba(70,85,110,.04));border:1px solid rgba(128,128,128,.22);padding:16px 18px;border-radius:14px}
+[data-testid="stMetricLabel"]{font-size:.85rem}
+[data-testid="stMetricValue"]{font-weight:700}
+section[data-testid="stSidebar"]{border-right:1px solid rgba(128,128,128,.2)}
+.stTabs [data-baseweb="tab-list"]{gap:8px}
+.stTabs [data-baseweb="tab"]{border-radius:10px;padding:10px 16px}
+div[data-testid="stAlert"]{border-radius:12px}
+hr{margin:1.5rem 0}
+</style>""",unsafe_allow_html=True)
 
 SPOT="https://data-api.binance.vision"
 FUT="https://fapi.binance.com"
@@ -129,7 +141,7 @@ def plan(df, score, live_price=None):
         return "SHORT",p,sl,tp,2.0
     return "WAIT",None,None,None,None
 
-def backtest(df, threshold=6, fee_bps=6, slippage_bps=2, risk_pct=0.5, max_hold=48):
+def backtest(df, threshold=6, fee_bps=6, slippage_bps=2, risk_pct=0.5, max_hold=48, start_index=220):
     """Diagnostic 1H backtest; one position at a time, next-open entry, ATR stop/target and trading costs."""
     if df.empty or len(df) < 300:
         return {"Trades": 0, "Win rate %": 0.0, "Profit factor": 0.0, "Expectancy R": 0.0,
@@ -138,7 +150,7 @@ def backtest(df, threshold=6, fee_bps=6, slippage_bps=2, risk_pct=0.5, max_hold=
     equity=1.0; peak=1.0; maxdd=0.0
     trades=0; wins=0; gross_profit=0.0; gross_loss=0.0; total_r=0.0; outcomes=[]
     cost_per_side=(float(fee_bps)+float(slippage_bps))/10000.0
-    i=220
+    i=max(220,int(start_index))
     while i < len(x)-2:
         a=x.iloc[i]
         if not np.isfinite(a.atr) or a.atr <= 0 or not np.isfinite(a.ema200) or not np.isfinite(a.rsi):
@@ -191,9 +203,9 @@ def backtest(df, threshold=6, fee_bps=6, slippage_bps=2, risk_pct=0.5, max_hold=
             "Net return %":(equity-1.0)*100.0}
 
 
-st.title("₿ BTC AI Trader — V1.3")
-st.caption("Motor técnico experimental · datos públicos de Binance · actualización automática cada 30 s · no conecta cuentas ni ejecuta órdenes.")
-st.markdown("**Datos:** precio en vivo por API pública; las señales técnicas usan velas 1H/4H cerradas. El backtest es diagnóstico y no garantiza resultados futuros.")
+st.title("₿ BTC AI Trader")
+st.caption("V1.4  ·  Terminal de análisis cuantitativo  ·  Datos públicos de Binance  ·  Sin conexión a cuentas ni ejecución de órdenes")
+st.info("Modo experimental: las señales son heurísticas. El backtest incorpora costes estimados y una prueba cronológica fuera de muestra, pero no demuestra rentabilidad futura.", icon="🧪")
 
 symbol=st.sidebar.selectbox("Símbolo",["BTCUSDT"])
 if st.sidebar.button("Actualizar ahora"):
@@ -239,33 +251,47 @@ def live_dashboard():
         cols[2].metric("TP",f"${tp:,.0f}")
         cols[3].metric("R:R",f"{rr:.2f}")
     else:
-        st.info("WAIT — no hay una oportunidad que cumpla todos los filtros de la V1.2.")
+        st.info("WAIT — no hay una oportunidad que cumpla todos los filtros de la V1.4.")
     st.subheader("Precio BTC — 1H")
     chart=d1.set_index("open_time")[["close","ema55","ema200"]].tail(240)
     st.line_chart(chart)
-    st.subheader("Backtest — V1.3")
-    st.write("Diagnóstico histórico 1H, entrada en apertura siguiente, stop 1 ATR, objetivo 2 ATR, una posición cada vez y costes de entrada/salida. Si stop y objetivo se tocan en la misma vela, se cuenta primero el stop. No replica exactamente la señal en vivo ni predice rentabilidad futura.")
+    st.subheader("Validación cuantitativa · V1.4")
+    st.write("Validación cronológica: el tramo inicial sirve para comparar umbrales; el último 30% se reserva como prueba fuera de muestra (OOS). El umbral se selecciona solo con el tramo de desarrollo, nunca con los resultados OOS. Modelo 1H simplificado; no replica exactamente la señal en vivo.")
     b1,b2,b3,b4=st.columns(4)
     fee_bps=b1.number_input("Comisión por lado (pb)",min_value=0.0,max_value=100.0,value=6.0,step=1.0,key="bt_fee_bps")
     slippage_bps=b2.number_input("Deslizamiento por lado (pb)",min_value=0.0,max_value=100.0,value=2.0,step=1.0,key="bt_slippage_bps")
     risk_pct=b3.number_input("Riesgo por operación (%)",min_value=0.1,max_value=5.0,value=0.5,step=0.1,key="bt_risk_pct")
     max_hold=b4.number_input("Máx. duración (velas 1H)",min_value=1,max_value=240,value=48,step=1,key="bt_max_hold")
-    if st.button("Ejecutar backtest V1.3",key="run_backtest_v13"):
+    if st.button("Ejecutar validación V1.4",key="run_backtest_v14"):
         try:
             with st.spinner("Descargando histórico y calculando…"):
                 end=int(datetime.now(timezone.utc).timestamp()*1000)
                 start=int((datetime.now(timezone.utc)-timedelta(days=365*5)).timestamp()*1000)
                 hist=paginate_klines(symbol,"1h",start,end,12000)
-                if hist.empty:
-                    st.session_state["bt_error"]="Binance no ha devuelto velas históricas. Prueba de nuevo en unos minutos."
+                if hist.empty or len(hist)<800:
+                    st.session_state["bt_error"]="Histórico insuficiente para una validación cronológica fiable. Prueba de nuevo más tarde."
                     st.session_state.pop("bt_results",None)
+                    st.session_state.pop("bt_oos",None)
                 else:
+                    cut=int(len(hist)*0.70)
+                    development=hist.iloc[:cut].copy()
+                    # Include a 300-candle warm-up before OOS, but start trading exactly at the split.
+                    warm=max(0,cut-300)
+                    test=hist.iloc[warm:].copy()
+                    start_test=cut-warm
                     rows=[]
                     for th in [5,6,7]:
-                        row=backtest(hist,th,fee_bps,slippage_bps,risk_pct,int(max_hold))
+                        row=backtest(development,th,fee_bps,slippage_bps,risk_pct,int(max_hold))
                         row["Umbral"]=th
                         rows.append(row)
-                    st.session_state["bt_results"]=pd.DataFrame(rows).set_index("Umbral")
+                    dev_table=pd.DataFrame(rows).set_index("Umbral")
+                    candidates=dev_table.replace([np.inf,-np.inf],np.nan)
+                    # Choose using development expectancy only; tie-break on profit factor.
+                    chosen=int(candidates.sort_values(["Expectancy R","Profit factor"],ascending=False).index[0])
+                    oos=backtest(test,chosen,fee_bps,slippage_bps,risk_pct,int(max_hold),start_index=start_test)
+                    st.session_state["bt_results"]=dev_table
+                    st.session_state["bt_oos"]=pd.DataFrame([{"Umbral seleccionado (solo desarrollo)":chosen,**oos}])
+                    st.session_state["bt_split"]=cut
                     st.session_state["bt_history_count"]=len(hist)
                     st.session_state.pop("bt_error",None)
         except Exception as e:
@@ -275,9 +301,25 @@ def live_dashboard():
         st.error("El backtest no ha podido terminar: "+st.session_state["bt_error"])
     if "bt_results" in st.session_state:
         bt=st.session_state["bt_results"]
-        st.caption(f"Histórico analizado: {st.session_state.get('bt_history_count',0):,} velas 1H. Límite actual: 12.000 velas, aproximadamente 16 meses.")
-        st.dataframe(bt,use_container_width=True)
-        st.download_button("Descargar resultados CSV",bt.reset_index().to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_backtest_v1_3.csv",mime="text/csv",key="download_backtest_v13")
+        split=st.session_state.get("bt_split",0)
+        st.caption(f"Histórico analizado: {st.session_state.get('bt_history_count',0):,} velas 1H · desarrollo: {split:,} velas (70%) · prueba OOS: {st.session_state.get('bt_history_count',0)-split:,} velas (30%). El histórico está limitado a 12.000 velas, aproximadamente 16 meses.")
+        st.markdown("#### 1 · Desarrollo — comparación de umbrales")
+        st.dataframe(bt.style.format({"Win rate %":"{:.1f}","Profit factor":"{:.2f}","Expectancy R":"{:.3f}","Net R":"{:.2f}","Max DD %":"{:.1f}","Net return %":"{:.1f}"}),use_container_width=True)
+        if "bt_oos" in st.session_state:
+            st.markdown("#### 2 · Prueba fuera de muestra — umbral elegido en desarrollo")
+            oos_table=st.session_state["bt_oos"]
+            st.dataframe(oos_table.style.format({"Win rate %":"{:.1f}","Profit factor":"{:.2f}","Expectancy R":"{:.3f}","Net R":"{:.2f}","Max DD %":"{:.1f}","Net return %":"{:.1f}"}),use_container_width=True)
+            exp=float(oos_table["Expectancy R"].iloc[0])
+            if exp>0:
+                st.warning("La expectativa OOS es positiva en esta muestra, pero aún requiere más periodos y pruebas de robustez; no es garantía de rentabilidad.")
+            else:
+                st.error("La expectativa OOS es negativa o nula: el sistema no supera esta prueba fuera de muestra. No usar para operar en real.")
+        export=bt.reset_index().assign(Segmento="Desarrollo")
+        if "bt_oos" in st.session_state:
+            export_oos=st.session_state["bt_oos"].rename(columns={"Umbral seleccionado (solo desarrollo)":"Umbral"})
+            export_oos["Segmento"]="Fuera de muestra"
+            export=pd.concat([export,export_oos],ignore_index=True,sort=False)
+        st.download_button("Descargar informe CSV",export.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_4.csv",mime="text/csv",key="download_backtest_v14")
   except Exception as e:
     st.error("No se pudieron cargar los datos. Comprueba la conexión o vuelve a actualizar.")
     st.caption(str(e))
