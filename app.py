@@ -471,7 +471,7 @@ def live_dashboard():
             st.markdown("#### Curva de resultados fuera de muestra")
             plot_trades=trades15.sort_values("Salida UTC").copy()
             plot_trades["R acumulado"]=plot_trades["R neto"].cumsum()
-            plot_trades["Máximo acumulado"]=plot_trades["R acumulado"].cummax()
+            plot_trades["Máximo acumulado"]=plot_trades["R acumulado"].cummax().clip(lower=0)
             plot_trades["Drawdown (R)"]=plot_trades["R acumulado"]-plot_trades["Máximo acumulado"]
             curve=go.Figure()
             curve.add_trace(go.Scatter(x=plot_trades["Salida UTC"],y=plot_trades["R acumulado"],mode="lines+markers",name="R acumulado",line=dict(color="#f7931a",width=2.5),marker=dict(size=5),hovertemplate="%{x}<br>R acumulado: %{y:.2f}<extra></extra>"))
