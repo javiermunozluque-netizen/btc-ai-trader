@@ -5,7 +5,7 @@ import numpy as np
 import requests, time
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.4", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.5", page_icon="₿", layout="wide")
 
 st.markdown("""<style>
 .block-container{padding-top:1.6rem;padding-bottom:3rem;max-width:1500px}
@@ -203,8 +203,75 @@ def backtest(df, threshold=6, fee_bps=6, slippage_bps=2, risk_pct=0.5, max_hold=
             "Net return %":(equity-1.0)*100.0}
 
 
+
+def backtest_diagnostic(df, threshold=7, filter_mode="Base", fee_bps=6, slippage_bps=2, risk_pct=0.5, max_hold=48, start_index=220, return_trades=False):
+    """Diagnostic backtest with optional causal filters and a per-trade audit log."""
+    empty = {"Trades":0,"Win rate %":0.0,"Profit factor":0.0,"Expectancy R":0.0,"Net R":0.0,"Max DD %":0.0,"Net return %":0.0}
+    if df.empty or len(df)<300:
+        return (empty, pd.DataFrame()) if return_trades else empty
+    x=add_indicators(df).reset_index(drop=True)
+    equity=1.0; peak=1.0; maxdd=0.0; wins=0; gp=0.0; gl=0.0; total_r=0.0; outcomes=[]; logs=[]
+    cost_side=(float(fee_bps)+float(slippage_bps))/10000.0
+    i=max(220,int(start_index))
+    while i < len(x)-2:
+        a=x.iloc[i]
+        if not np.isfinite(a.atr) or a.atr<=0 or not np.isfinite(a.ema200) or not np.isfinite(a.rsi):
+            i+=1; continue
+        trend=2 if a.close>a.ema55>a.ema200 and a.ema55>x.ema55.iloc[i-4] else (1 if a.close>a.ema55 else (-2 if a.close<a.ema55<a.ema200 else -1))
+        conf=1 if a.close>a.ema55 and a.ema55>x.ema55.iloc[i-4] else (-1 if a.close<a.ema55 and a.ema55<x.ema55.iloc[i-4] else 0)
+        mom=1 if 50<=a.rsi<=65 and a.rsi>x.rsi.iloc[i-3] else (-1 if a.rsi<45 else 0)
+        vol=1 if a.vol_rel>=1.2 and a.close>a.open else (-1 if a.vol_rel>=1.2 and a.close<a.open else 0)
+        stc,_,_=structure_score(x.iloc[max(0,i-60):i+1])
+        score=trend+conf+mom+vol+stc
+        if abs(score)<threshold:
+            i+=1; continue
+        direction=1 if score>=threshold else -1
+        # Each filter is defined using information available at signal time only.
+        if filter_mode=="EMA trend" and not ((direction==1 and a.close>a.ema200) or (direction==-1 and a.close<a.ema200)):
+            i+=1; continue
+        if filter_mode=="Momentum" and not ((direction==1 and 50<=a.rsi<=65 and a.rsi>x.rsi.iloc[i-3]) or (direction==-1 and a.rsi<45)):
+            i+=1; continue
+        if filter_mode=="Volume" and not (np.isfinite(a.vol_rel) and a.vol_rel>=1.2):
+            i+=1; continue
+        if filter_mode=="Structure" and not ((direction==1 and stc>0) or (direction==-1 and stc<0)):
+            i+=1; continue
+        entry_idx=i+1; entry=float(x.open.iloc[entry_idx]); risk=float(a.atr)
+        stop=entry-direction*risk; target=entry+direction*2*risk
+        exit_price=None; exit_idx=None; reason="Time exit"
+        last=min(entry_idx+int(max_hold),len(x)-1)
+        for j in range(entry_idx,last+1):
+            bar=x.iloc[j]
+            if direction==1:
+                if bar.low<=stop: exit_price=stop; exit_idx=j; reason="Stop"; break
+                if bar.high>=target: exit_price=target; exit_idx=j; reason="Target"; break
+            else:
+                if bar.high>=stop: exit_price=stop; exit_idx=j; reason="Stop"; break
+                if bar.low<=target: exit_price=target; exit_idx=j; reason="Target"; break
+        if exit_price is None:
+            exit_idx=last; exit_price=float(x.close.iloc[exit_idx])
+        gross_r=direction*(exit_price-entry)/risk
+        costs_r=(2*cost_side*entry)/risk
+        net_r=gross_r-costs_r
+        outcomes.append(net_r); total_r+=net_r
+        if net_r>0: wins+=1; gp+=net_r
+        else: gl+=abs(net_r)
+        equity*=max(0.0,1.0+(float(risk_pct)/100.0)*net_r)
+        peak=max(peak,equity)
+        if peak>0: maxdd=max(maxdd,(peak-equity)/peak)
+        logs.append({"Entrada UTC":x.open_time.iloc[entry_idx],"Salida UTC":x.open_time.iloc[exit_idx],
+                     "Dirección":"LONG" if direction==1 else "SHORT","Filtro":filter_mode,"Score":score,
+                     "Entrada":entry,"Salida":exit_price,"Stop inicial":stop,"Objetivo inicial":target,
+                     "Motivo salida":reason,"R bruto":gross_r,"Costes (R)":costs_r,"R neto":net_r,
+                     "Duración (h)":exit_idx-entry_idx})
+        i=exit_idx+1
+    summary={"Trades":len(outcomes),"Win rate %":wins/len(outcomes)*100 if outcomes else 0.0,
+             "Profit factor":gp/gl if gl>0 else (float("inf") if gp>0 else 0.0),
+             "Expectancy R":float(np.mean(outcomes)) if outcomes else 0.0,"Net R":total_r,
+             "Max DD %":maxdd*100,"Net return %":(equity-1)*100}
+    return (summary,pd.DataFrame(logs)) if return_trades else summary
+
 st.title("₿ BTC AI Trader")
-st.caption("V1.4  ·  Terminal de análisis cuantitativo  ·  Datos públicos de Binance  ·  Sin conexión a cuentas ni ejecución de órdenes")
+st.caption("V1.5  ·  Terminal de análisis cuantitativo  ·  Datos públicos de Binance  ·  Sin conexión a cuentas ni ejecución de órdenes")
 st.info("Modo experimental: las señales son heurísticas. El backtest incorpora costes estimados y una prueba cronológica fuera de muestra, pero no demuestra rentabilidad futura.", icon="🧪")
 
 symbol=st.sidebar.selectbox("Símbolo",["BTCUSDT"])
@@ -320,6 +387,69 @@ def live_dashboard():
             export_oos["Segmento"]="Fuera de muestra"
             export=pd.concat([export,export_oos],ignore_index=True,sort=False)
         st.download_button("Descargar informe CSV",export.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_4.csv",mime="text/csv",key="download_backtest_v14")
+
+    st.divider()
+    st.subheader("Laboratorio de operaciones · V1.5")
+    st.write("Auditoría por operación y comparación de filtros. Se usa un umbral fijo de 7 para comparar los filtros de forma homogénea. El tramo OOS queda reservado para evaluar el filtro seleccionado en desarrollo; como se prueban varias alternativas, el resultado sigue siendo exploratorio.")
+    if st.button("Ejecutar diagnóstico V1.5",key="run_diagnostic_v15"):
+        try:
+            with st.spinner("Analizando operaciones y filtros…"):
+                end2=int(datetime.now(timezone.utc).timestamp()*1000)
+                start2=int((datetime.now(timezone.utc)-timedelta(days=365*5)).timestamp()*1000)
+                hist15=paginate_klines(symbol,"1h",start2,end2,12000)
+                if hist15.empty or len(hist15)<800:
+                    st.session_state["diag_error"]="No hay suficiente histórico para separar desarrollo y prueba."
+                    st.session_state.pop("diag_compare",None); st.session_state.pop("diag_oos",None); st.session_state.pop("diag_trades",None)
+                else:
+                    cut15=int(len(hist15)*0.70)
+                    dev15=hist15.iloc[:cut15].copy()
+                    warm15=max(0,cut15-300)
+                    test15=hist15.iloc[warm15:].copy()
+                    start_oos15=cut15-warm15
+                    modes=["Base","EMA trend","Momentum","Volume","Structure"]
+                    comparison=[]
+                    for mode in modes:
+                        met=backtest_diagnostic(dev15,7,mode,fee_bps,slippage_bps,risk_pct,int(max_hold))
+                        comparison.append({"Filtro":mode,**met})
+                    comp15=pd.DataFrame(comparison)
+                    ranked=comp15.replace([np.inf,-np.inf],np.nan).sort_values(["Expectancy R","Profit factor"],ascending=False)
+                    chosen15=str(ranked.iloc[0]["Filtro"])
+                    oos15, trades15=backtest_diagnostic(test15,7,chosen15,fee_bps,slippage_bps,risk_pct,int(max_hold),start_index=start_oos15,return_trades=True)
+                    # Also retain all OOS trades for a side-by-side long/short and exit-reason diagnosis.
+                    st.session_state["diag_compare"]=comp15
+                    st.session_state["diag_oos"]=pd.DataFrame([{"Filtro elegido en desarrollo":chosen15,**oos15}])
+                    st.session_state["diag_trades"]=trades15
+                    st.session_state["diag_count"]=len(hist15)
+                    st.session_state["diag_cut"]=cut15
+                    st.session_state.pop("diag_error",None)
+        except Exception as e:
+            st.session_state["diag_error"]=f"{type(e).__name__}: {e}"
+            st.session_state.pop("diag_compare",None); st.session_state.pop("diag_oos",None); st.session_state.pop("diag_trades",None)
+    if st.session_state.get("diag_error"):
+        st.error("No se pudo completar el diagnóstico: "+st.session_state["diag_error"])
+    if "diag_compare" in st.session_state:
+        comp15=st.session_state["diag_compare"]
+        st.caption(f"Histórico: {st.session_state.get('diag_count',0):,} velas 1H · desarrollo: {st.session_state.get('diag_cut',0):,} · OOS: {st.session_state.get('diag_count',0)-st.session_state.get('diag_cut',0):,}. Umbral fijo = 7.")
+        st.markdown("#### Comparación de filtros — desarrollo")
+        st.dataframe(comp15.style.format({"Win rate %":"{:.1f}","Profit factor":"{:.2f}","Expectancy R":"{:.3f}","Net R":"{:.2f}","Max DD %":"{:.1f}","Net return %":"{:.1f}"}),use_container_width=True)
+        st.markdown("#### Evaluación fuera de muestra")
+        st.dataframe(st.session_state["diag_oos"].style.format({"Win rate %":"{:.1f}","Profit factor":"{:.2f}","Expectancy R":"{:.3f}","Net R":"{:.2f}","Max DD %":"{:.1f}","Net return %":"{:.1f}"}),use_container_width=True)
+        trades15=st.session_state["diag_trades"]
+        if not trades15.empty:
+            st.markdown("#### Diagnóstico de operaciones OOS")
+            t1,t2=st.columns(2)
+            t1.markdown("**Por dirección**")
+            st1=trades15.groupby("Dirección").agg(Operaciones=("R neto","count"),Acierto_pct=("R neto",lambda v:(v>0).mean()*100),Expectativa_R=("R neto","mean"),R_neto=("R neto","sum")).reset_index()
+            t1.dataframe(st1.style.format({"Acierto_pct":"{:.1f}","Expectativa_R":"{:.3f}","R_neto":"{:.2f}"}),use_container_width=True)
+            t2.markdown("**Por salida**")
+            st2=trades15.groupby("Motivo salida").agg(Operaciones=("R neto","count"),Expectativa_R=("R neto","mean"),R_neto=("R neto","sum")).reset_index()
+            t2.dataframe(st2.style.format({"Expectativa_R":"{:.3f}","R_neto":"{:.2f}"}),use_container_width=True)
+            st.markdown("#### Registro detallado")
+            st.dataframe(trades15,use_container_width=True)
+            st.download_button("Descargar operaciones OOS CSV",trades15.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_trades_v1_5.csv",mime="text/csv",key="download_trades_v15")
+        else:
+            st.warning("No se generaron operaciones en el tramo OOS para este filtro.")
+
   except Exception as e:
     st.error("No se pudieron cargar los datos. Comprueba la conexión o vuelve a actualizar.")
     st.caption(str(e))
