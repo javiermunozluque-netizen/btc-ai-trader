@@ -8,15 +8,24 @@ from datetime import datetime, timezone, timedelta
 st.set_page_config(page_title="BTC AI Trader V1.6", page_icon="₿", layout="wide")
 
 st.markdown("""<style>
-.block-container{padding-top:1.6rem;padding-bottom:3rem;max-width:1500px}
-[data-testid="stMetric"]{background:linear-gradient(135deg,rgba(70,85,110,.12),rgba(70,85,110,.04));border:1px solid rgba(128,128,128,.22);padding:16px 18px;border-radius:14px}
-[data-testid="stMetricLabel"]{font-size:.85rem}
-[data-testid="stMetricValue"]{font-weight:700}
-section[data-testid="stSidebar"]{border-right:1px solid rgba(128,128,128,.2)}
-.stTabs [data-baseweb="tab-list"]{gap:8px}
-.stTabs [data-baseweb="tab"]{border-radius:10px;padding:10px 16px}
-div[data-testid="stAlert"]{border-radius:12px}
-hr{margin:1.5rem 0}
+:root{--btc-accent:#f7931a}
+.block-container{padding-top:1.25rem;padding-bottom:3rem;max-width:1600px}
+.stApp{background:radial-gradient(ellipse at 8% 0%,rgba(247,147,26,.075),transparent 34%),radial-gradient(ellipse at 95% 8%,rgba(85,119,255,.07),transparent 30%)}
+[data-testid="stHeader"]{background:transparent}
+[data-testid="stMetric"]{background:linear-gradient(145deg,rgba(127,140,160,.12),rgba(127,140,160,.035));border:1px solid rgba(127,140,160,.24);padding:17px 19px;border-radius:16px;box-shadow:0 5px 20px rgba(0,0,0,.035);min-height:108px}
+[data-testid="stMetricLabel"]{font-size:.78rem;letter-spacing:.045em;text-transform:uppercase;opacity:.78}
+[data-testid="stMetricValue"]{font-weight:750;letter-spacing:-.035em}
+section[data-testid="stSidebar"]{border-right:1px solid rgba(127,140,160,.2)}
+.stTabs [data-baseweb="tab-list"]{gap:7px;border-bottom:1px solid rgba(127,140,160,.22)}
+.stTabs [data-baseweb="tab"]{border-radius:10px 10px 0 0;padding:11px 16px;font-weight:600}
+.stTabs [aria-selected="true"]{border-bottom:2px solid var(--btc-accent)}
+div[data-testid="stAlert"]{border-radius:13px;border:1px solid rgba(127,140,160,.2)}
+div.stButton>button,div.stDownloadButton>button{border-radius:10px;font-weight:650;min-height:2.65rem}
+div.stButton>button[kind="primary"]{background:var(--btc-accent);border-color:var(--btc-accent);color:#171717}
+div[data-testid="stDataFrame"]{border:1px solid rgba(127,140,160,.22);border-radius:12px;overflow:hidden}
+h1{font-weight:800;letter-spacing:-.055em} h2,h3{letter-spacing:-.03em}
+hr{margin:1.35rem 0;border-color:rgba(127,140,160,.2)}
+@media(max-width:700px){.block-container{padding-top:.7rem;padding-left:1rem;padding-right:1rem}[data-testid="stMetric"]{padding:12px;min-height:94px}[data-testid="stMetricValue"]{font-size:1.35rem}}
 </style>""",unsafe_allow_html=True)
 
 SPOT="https://data-api.binance.vision"
@@ -273,7 +282,7 @@ def backtest_diagnostic(df, threshold=7, filter_mode="Base", fee_bps=6, slippage
     return (summary,pd.DataFrame(logs)) if return_trades else summary
 
 st.title("₿ BTC AI Trader")
-st.caption("V1.5  ·  Terminal de análisis cuantitativo  ·  Datos públicos de Binance  ·  Sin conexión a cuentas ni ejecución de órdenes")
+st.caption("V1.6  ·  Quant research terminal  ·  Datos públicos de Binance  ·  Sin conexión a cuentas ni ejecución de órdenes")
 st.info("Modo experimental: las señales son heurísticas. El backtest incorpora costes estimados y una prueba cronológica fuera de muestra, pero no demuestra rentabilidad futura.", icon="🧪")
 
 symbol=st.sidebar.selectbox("Símbolo",["BTCUSDT"])
@@ -320,18 +329,18 @@ def live_dashboard():
         cols[2].metric("TP",f"${tp:,.0f}")
         cols[3].metric("R:R",f"{rr:.2f}")
     else:
-        st.info("WAIT — no hay una oportunidad que cumpla todos los filtros de la V1.4.")
+        st.info("WAIT — no hay una oportunidad que cumpla los criterios actuales.")
     st.subheader("Precio BTC — 1H")
     chart=d1.set_index("open_time")[["close","ema55","ema200"]].tail(240)
     st.line_chart(chart)
-    st.subheader("Validación cuantitativa · V1.4")
+    st.subheader("Validación cuantitativa · V1.6")
     st.write("Validación cronológica: el tramo inicial sirve para comparar umbrales; el último 30% se reserva como prueba fuera de muestra (OOS). El umbral se selecciona solo con el tramo de desarrollo, nunca con los resultados OOS. Modelo 1H simplificado; no replica exactamente la señal en vivo.")
     b1,b2,b3,b4=st.columns(4)
     fee_bps=b1.number_input("Comisión por lado (pb)",min_value=0.0,max_value=100.0,value=6.0,step=1.0,key="bt_fee_bps")
     slippage_bps=b2.number_input("Deslizamiento por lado (pb)",min_value=0.0,max_value=100.0,value=2.0,step=1.0,key="bt_slippage_bps")
     risk_pct=b3.number_input("Riesgo por operación (%)",min_value=0.1,max_value=5.0,value=0.5,step=0.1,key="bt_risk_pct")
     max_hold=b4.number_input("Máx. duración (velas 1H)",min_value=1,max_value=240,value=48,step=1,key="bt_max_hold")
-    if st.button("Ejecutar validación V1.4",key="run_backtest_v14"):
+    if st.button("Ejecutar validación V1.6",key="run_backtest_v14"):
         try:
             with st.spinner("Descargando histórico y calculando…"):
                 end=int(datetime.now(timezone.utc).timestamp()*1000)
@@ -370,7 +379,7 @@ def live_dashboard():
     if "bt_results" in st.session_state:
         bt=st.session_state["bt_results"]
         split=st.session_state.get("bt_split",0)
-        st.caption(f"Histórico analizado: {st.session_state.get('bt_history_count',0):,} velas 1H · desarrollo: {split:,} velas (70%) · prueba OOS: {st.session_state.get('bt_history_count',0)-split:,} velas (30%). El histórico está limitado a 12.000 velas, aproximadamente 16 meses.")
+        st.caption(f"Histórico analizado: {st.session_state.get('bt_history_count',0):,} velas 1H · desarrollo: {split:,} velas (70%) · prueba OOS: {st.session_state.get('bt_history_count',0)-split:,} velas (30%). Se usan las últimas 12.000 velas disponibles, no las primeras desde la fecha inicial.")
         st.markdown("#### 1 · Desarrollo — comparación de umbrales")
         st.dataframe(bt.style.format({"Win rate %":"{:.1f}","Profit factor":"{:.2f}","Expectancy R":"{:.3f}","Net R":"{:.2f}","Max DD %":"{:.1f}","Net return %":"{:.1f}"}),use_container_width=True)
         if "bt_oos" in st.session_state:
@@ -387,12 +396,12 @@ def live_dashboard():
             export_oos=st.session_state["bt_oos"].rename(columns={"Umbral seleccionado (solo desarrollo)":"Umbral"})
             export_oos["Segmento"]="Fuera de muestra"
             export=pd.concat([export,export_oos],ignore_index=True,sort=False)
-        st.download_button("Descargar informe CSV",export.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_4.csv",mime="text/csv",key="download_backtest_v14")
+        st.download_button("Descargar informe CSV",export.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_6.csv",mime="text/csv",key="download_backtest_v14")
 
     st.divider()
-    st.subheader("Laboratorio de operaciones · V1.5")
+    st.subheader("Laboratorio de operaciones · V1.6")
     st.write("Auditoría por operación y comparación de filtros. Se usa un umbral fijo de 7 para comparar los filtros de forma homogénea. El tramo OOS queda reservado para evaluar el filtro seleccionado en desarrollo; como se prueban varias alternativas, el resultado sigue siendo exploratorio.")
-    if st.button("Ejecutar diagnóstico V1.5",key="run_diagnostic_v15"):
+    if st.button("Ejecutar diagnóstico V1.6",key="run_diagnostic_v15"):
         try:
             with st.spinner("Analizando operaciones y filtros…"):
                 end2=int(datetime.now(timezone.utc).timestamp()*1000)
@@ -446,7 +455,7 @@ def live_dashboard():
             t2.dataframe(st2.style.format({"Expectativa_R":"{:.3f}","R_neto":"{:.2f}"}),use_container_width=True)
             st.markdown("#### Registro detallado")
             st.dataframe(trades15,use_container_width=True)
-            st.download_button("Descargar operaciones OOS CSV",trades15.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_trades_v1_5.csv",mime="text/csv",key="download_trades_v15")
+            st.download_button("Descargar operaciones OOS CSV",trades15.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_trades_v1_6.csv",mime="text/csv",key="download_trades_v15")
         else:
             st.warning("No se generaron operaciones en el tramo OOS para este filtro.")
 
