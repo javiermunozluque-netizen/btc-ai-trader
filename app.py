@@ -477,7 +477,20 @@ def live_dashboard():
         comp15=st.session_state["diag_compare"]
         st.caption(f"Histórico: {st.session_state.get('diag_count',0):,} velas 1H · desarrollo: {st.session_state.get('diag_cut',0):,} · OOS: {st.session_state.get('diag_count',0)-st.session_state.get('diag_cut',0):,}. Umbral fijo = 7. Se comparan 15 combinaciones de filtro y dirección.")
         st.success("Diagnóstico completado correctamente.")
-        st.markdown("#### Comparación de filtros — desarrollo")
+        st.markdown("#### Comparación visual — expectativa por filtro y dirección")
+        chart_comp=comp15.copy()
+        chart_comp["Configuración"]=chart_comp["Filtro"]+" · "+chart_comp["Dirección"]
+        chart_comp=chart_comp.sort_values("Expectancy R",ascending=True)
+        comp_fig=go.Figure()
+        bar_colors=["#16a085" if v>0 else "#e05a5a" for v in chart_comp["Expectancy R"]]
+        comp_fig.add_trace(go.Bar(x=chart_comp["Expectancy R"],y=chart_comp["Configuración"],orientation="h",marker_color=bar_colors,hovertemplate="%{y}<br>Expectativa: %{x:.3f} R/operación<extra></extra>"))
+        comp_fig.add_vline(x=0,line_dash="dash",line_color="gray")
+        comp_fig.update_layout(height=510,template="plotly_dark" if st.get_option("theme.base")=="dark" else "plotly_white",margin=dict(l=8,r=8,t=15,b=8),xaxis_title="Expectativa neta (R por operación)",yaxis_title="",showlegend=False)
+        comp_fig.update_xaxes(gridcolor="rgba(127,140,160,.18)")
+        comp_fig.update_yaxes(showgrid=False)
+        st.plotly_chart(comp_fig,use_container_width=True,config={"displaylogo":False})
+        st.caption("Verde = expectativa media positiva en desarrollo; rojo = negativa. La configuración se elige solo con el tramo de desarrollo y después se evalúa en OOS.")
+        st.markdown("#### Tabla detallada — desarrollo")
         st.dataframe(comp15.style.format({"Win rate %":"{:.1f}","Profit factor":"{:.2f}","Expectancy R":"{:.3f}","Net R":"{:.2f}","Max DD %":"{:.1f}","Net return %":"{:.1f}"}),use_container_width=True)
         st.markdown("#### Evaluación fuera de muestra")
         st.dataframe(st.session_state["diag_oos"].style.format({"Win rate %":"{:.1f}","Profit factor":"{:.2f}","Expectancy R":"{:.3f}","Net R":"{:.2f}","Max DD %":"{:.1f}","Net return %":"{:.1f}"}),use_container_width=True)
