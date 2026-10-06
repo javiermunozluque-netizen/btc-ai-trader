@@ -5,7 +5,7 @@ import numpy as np
 import requests, time
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.2", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.3", page_icon="₿", layout="wide")
 
 SPOT="https://data-api.binance.vision"
 FUT="https://fapi.binance.com"
@@ -58,9 +58,11 @@ def add_indicators(df):
     x["rsi"]=rsi(x.close); x["atr"]=atr(x)
     x["vol_ma"]=x.volume.rolling(20).mean()
     x["vol_rel"]=x.volume/x.vol_ma
-    # Simple confirmed swing structure using 3-bar pivots
-    x["ph"]=(x.high>x.high.shift(1))&(x.high>x.high.shift(2))&(x.high>=x.high.shift(-1))&(x.high>=x.high.shift(-2))
-    x["pl"]=(x.low<x.low.shift(1))&(x.low<x.low.shift(2))&(x.low<=x.low.shift(-1))&(x.low<=x.low.shift(-2))
+    # Pivots are confirmed two candles later: avoid using future candles in historical signals.
+    ph=(x.high>x.high.shift(1))&(x.high>x.high.shift(2))&(x.high>=x.high.shift(-1))&(x.high>=x.high.shift(-2))
+    pl=(x.low<x.low.shift(1))&(x.low<x.low.shift(2))&(x.low<=x.low.shift(-1))&(x.low<=x.low.shift(-2))
+    x["ph"]=ph.shift(2).fillna(False).astype(bool)
+    x["pl"]=pl.shift(2).fillna(False).astype(bool)
     return x
 
 def structure_score(x):
@@ -124,47 +126,71 @@ def plan(df, score, live_price=None):
         return "SHORT",p,sl,tp,2.0
     return "WAIT",None,None,None,None
 
-def backtest(df, threshold=6, fee=0.0006):
+def backtest(df, threshold=6, fee_bps=6, slippage_bps=2, risk_pct=0.5, max_hold=48):
+    """Diagnostic 1H backtest; one position at a time, next-open entry, ATR stop/target and trading costs."""
+    if df.empty or len(df) < 300:
+        return {"Trades": 0, "Win rate %": 0.0, "Profit factor": 0.0, "Expectancy R": 0.0,
+                "Net R": 0.0, "Max DD %": 0.0, "Net return %": 0.0}
     x=add_indicators(df).reset_index(drop=True)
-    equity=1.0; peak=1.0; maxdd=0; wins=losses=trades=0; R=0
+    equity=1.0; peak=1.0; maxdd=0.0
+    trades=0; wins=0; gross_profit=0.0; gross_loss=0.0; total_r=0.0; outcomes=[]
+    cost_per_side=(float(fee_bps)+float(slippage_bps))/10000.0
     i=220
-    while i<len(x)-2:
-        s=technical_score(x.iloc[:i+1], x.iloc[:i+1])[7] if False else None
-        # score on 1H alone: trend + confirmation + momentum + volume + structure
+    while i < len(x)-2:
         a=x.iloc[i]
+        if not np.isfinite(a.atr) or a.atr <= 0 or not np.isfinite(a.ema200) or not np.isfinite(a.rsi):
+            i+=1; continue
         trend=2 if a.close>a.ema55>a.ema200 and a.ema55>x.ema55.iloc[i-4] else (1 if a.close>a.ema55 else (-2 if a.close<a.ema55<a.ema200 else -1))
         conf=1 if a.close>a.ema55 and a.ema55>x.ema55.iloc[i-4] else (-1 if a.close<a.ema55 and a.ema55<x.ema55.iloc[i-4] else 0)
         mom=1 if 50<=a.rsi<=65 and a.rsi>x.rsi.iloc[i-3] else (-1 if a.rsi<45 else 0)
         vol=1 if a.vol_rel>=1.2 and a.close>a.open else (-1 if a.vol_rel>=1.2 and a.close<a.open else 0)
-        # local structure
         q=x.iloc[max(0,i-60):i+1]
-        st,_,_=structure_score(q)
-        score=trend+conf+mom+vol+st
-        if abs(score)<threshold: i+=1; continue
+        stc,_,_=structure_score(q)
+        score=trend+conf+mom+vol+stc
+        if abs(score)<threshold:
+            i+=1; continue
         direction=1 if score>=threshold else -1
-        entry=float(x.open.iloc[i+1]); A=float(a.atr); stop=entry-direction*A; target=entry+direction*2*A
-        result=None
-        for j in range(i+1,min(i+49,len(x))):
+        entry=float(x.open.iloc[i+1])
+        risk=float(a.atr)
+        stop=entry-direction*risk
+        target=entry+direction*2*risk
+        exit_price=None; exit_idx=None
+        last=min(i+1+int(max_hold),len(x)-1)
+        for j in range(i+1,last+1):
+            bar=x.iloc[j]
+            # Conservative assumption: if stop and target are both touched, count the stop first.
             if direction==1:
-                if x.low.iloc[j]<=stop: result=-1; break
-                if x.high.iloc[j]>=target: result=2; break
+                if bar.low<=stop: exit_price=stop; exit_idx=j; break
+                if bar.high>=target: exit_price=target; exit_idx=j; break
             else:
-                if x.high.iloc[j]>=stop: result=-1; break
-                if x.low.iloc[j]<=target: result=2; break
-        if result is None: i+=1; continue
-        trades+=1
-        net=(result*0.5) - fee*2 # simplified R-equivalent approximation
-        R+=result
-        if result==2: wins+=1
-        else: losses+=1
-        equity*=1+net*0.005
-        peak=max(peak,equity); maxdd=max(maxdd,(peak-equity)/peak)
-        i=j+1
-    return trades,wins,losses,(wins/(wins+losses)*100 if wins+losses else 0),R,maxdd
+                if bar.high>=stop: exit_price=stop; exit_idx=j; break
+                if bar.low<=target: exit_price=target; exit_idx=j; break
+        if exit_price is None:
+            exit_idx=last
+            exit_price=float(x.close.iloc[exit_idx])
+        gross_r=direction*(exit_price-entry)/risk
+        costs_r=(2*cost_per_side*entry)/risk
+        net_r=gross_r-costs_r
+        trades+=1; outcomes.append(net_r); total_r+=net_r
+        if net_r>0: wins+=1; gross_profit+=net_r
+        else: gross_loss+=abs(net_r)
+        equity*=max(0.0,1.0+(float(risk_pct)/100.0)*net_r)
+        peak=max(peak,equity)
+        if peak>0: maxdd=max(maxdd,(peak-equity)/peak)
+        i=exit_idx+1
+    expectancy=float(np.mean(outcomes)) if outcomes else 0.0
+    return {"Trades":trades,
+            "Win rate %":(wins/trades*100.0 if trades else 0.0),
+            "Profit factor":(gross_profit/gross_loss if gross_loss>0 else (float("inf") if gross_profit>0 else 0.0)),
+            "Expectancy R":expectancy,
+            "Net R":total_r,
+            "Max DD %":maxdd*100.0,
+            "Net return %":(equity-1.0)*100.0}
 
-st.title("₿ BTC AI Trader — V1.2")
+
+st.title("₿ BTC AI Trader — V1.3")
 st.caption("Motor técnico experimental · datos públicos de Binance · actualización automática cada 30 s · no conecta cuentas ni ejecuta órdenes.")
-st.markdown("**Datos:** precio en vivo aproximado por API pública; indicadores calculados con velas 1H/4H, algunas aún abiertas. No es una señal garantizada.")
+st.markdown("**Datos:** precio en vivo por API pública; las señales técnicas usan velas 1H/4H cerradas. El backtest es diagnóstico y no garantiza resultados futuros.")
 
 symbol=st.sidebar.selectbox("Símbolo",["BTCUSDT"])
 if st.sidebar.button("Actualizar ahora"):
@@ -175,7 +201,10 @@ def live_dashboard():
   try:
     live_ticker=get_json(SPOT+"/api/v3/ticker/price", {"symbol":symbol})
     live_price=float(live_ticker["price"])
-    d1,d4=current_data(symbol)
+    d1_raw,d4_raw=current_data(symbol)
+    # Exclude the currently forming candle from signal calculations.
+    d1=d1_raw.iloc[:-1].copy()
+    d4=d4_raw.iloc[:-1].copy()
     s4,s1,mom,vol,stc,hs,ls,score=technical_score(d4,d1)
     oi_now,oi_change,fr,ds=derivative_snapshot(symbol)
     total=max(-8,min(8,score+ds))
@@ -211,18 +240,30 @@ def live_dashboard():
     st.subheader("Precio BTC — 1H")
     chart=d1.set_index("open_time")[["close","ema55","ema200"]].tail(240)
     st.line_chart(chart)
-    st.subheader("Backtest")
-    st.write("Prueba inicial: 1H, entrada en la vela siguiente, stop 1 ATR, objetivo 2 ATR, comisión aproximada. No usar para decidir dinero real.")
-    if st.button("Ejecutar backtest"):
+    st.subheader("Backtest — V1.3")
+    st.write("Diagnóstico histórico 1H, entrada en apertura siguiente, stop 1 ATR, objetivo 2 ATR, una posición cada vez y costes de entrada/salida. Si stop y objetivo se tocan en la misma vela, se cuenta primero el stop. No replica exactamente la señal en vivo ni predice rentabilidad futura.")
+    b1,b2,b3,b4=st.columns(4)
+    fee_bps=b1.number_input("Comisión por lado (pb)",min_value=0.0,max_value=100.0,value=6.0,step=1.0)
+    slippage_bps=b2.number_input("Deslizamiento por lado (pb)",min_value=0.0,max_value=100.0,value=2.0,step=1.0)
+    risk_pct=b3.number_input("Riesgo por operación (%)",min_value=0.1,max_value=5.0,value=0.5,step=0.1)
+    max_hold=b4.number_input("Máx. duración (velas 1H)",min_value=1,max_value=240,value=48,step=1)
+    if st.button("Ejecutar backtest V1.3"):
         with st.spinner("Descargando histórico y calculando…"):
             end=int(datetime.now(timezone.utc).timestamp()*1000)
             start=int((datetime.now(timezone.utc)-timedelta(days=365*5)).timestamp()*1000)
             hist=paginate_klines(symbol,"1h",start,end,12000)
-            res=[]
-            for th in [6,7,8]:
-                res.append((th,)+backtest(hist,th))
-            bt=pd.DataFrame(res,columns=["Umbral","Trades","Wins","Losses","Win rate %","Resultado R","Max DD"])
-            st.dataframe(bt.style.format({"Win rate %":"{:.1f}","Resultado R":"{:.1f}","Max DD":"{:.1%}"}),use_container_width=True)
+            if hist.empty:
+                st.error("No se ha podido descargar histórico para el backtest.")
+            else:
+                st.caption(f"Histórico disponible: {len(hist):,} velas 1H (límite actual: 12.000 velas, aproximadamente 16 meses).")
+                res=[]
+                for th in [5,6,7]:
+                    row=backtest(hist,th,fee_bps,slippage_bps,risk_pct,int(max_hold))
+                    row["Umbral"]=th
+                    res.append(row)
+                bt=pd.DataFrame(res).set_index("Umbral")
+                st.dataframe(bt.style.format({"Win rate %":"{:.1f}","Profit factor":"{:.2f}","Expectancy R":"{:.3f}","Net R":"{:.2f}","Max DD %":"{:.2f}","Net return %":"{:.2f}"}),use_container_width=True)
+                st.download_button("Descargar resultados CSV",bt.reset_index().to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_backtest_v1_3.csv",mime="text/csv")
   except Exception as e:
     st.error("No se pudieron cargar los datos. Comprueba la conexión o vuelve a actualizar.")
     st.caption(str(e))
