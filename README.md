@@ -1,22 +1,25 @@
-# BTC AI Trader V1.4
+# BTC AI Trader V1.5
 
 ## Qué es
-Dashboard experimental para BTC/USDT con datos públicos de Binance. No requiere claves de API, no conecta cuentas y no ejecuta órdenes. La interfaz se actualiza periódicamente mientras la página está abierta.
+Dashboard experimental para BTC/USDT con datos públicos de Binance. No requiere claves de API, no conecta cuentas y no ejecuta órdenes.
 
 ## Funciones
-- Cotización pública BTC/USDT y velas 1H/4H cerradas
+- Cotización BTC/USDT y velas 1H/4H cerradas
 - EMA55/EMA200, RSI, ATR, volumen relativo y estructura HH/HL/LH/LL
 - Open Interest y funding como contexto de derivados
-- Score heurístico LONG/SHORT/WAIT y niveles ilustrativos de entrada, stop y objetivo
+- Score heurístico LONG/SHORT/WAIT y niveles ilustrativos
 - Gráfico de precio e indicadores
-- Backtest 1H con comisión y deslizamiento configurables
-- Validación cronológica V1.4: compara umbrales en el tramo inicial de desarrollo (70%) y evalúa el umbral seleccionado en el último 30% reservado fuera de muestra
-- Exportación CSV de las métricas de desarrollo y de la prueba OOS
+- Validación cronológica V1.4: comparación de umbrales en desarrollo y evaluación del seleccionado en el tramo OOS
+- Laboratorio V1.5: compara filtro base, tendencia EMA, momentum, volumen y estructura usando el mismo umbral fijo
+- Auditoría de operaciones OOS: dirección LONG/SHORT, precio de entrada y salida, motivo de salida, R bruto, costes estimados, R neto y duración
+- Resumen de resultados por dirección y motivo de salida; exportación CSV de las operaciones
 
-## Cómo interpretar la validación
-El umbral se elige por expectativa R en el tramo de desarrollo; la muestra OOS no se utiliza para elegirlo. Los indicadores se calculan sobre el histórico anterior disponible y el backtest OOS comienza en el punto de corte tras un periodo de calentamiento de 300 velas. Si la expectativa OOS es negativa o nula, el sistema no supera esa prueba.
+## Cómo interpretar V1.5
+La comparación de filtros se hace en el tramo de desarrollo (70% del histórico) y el filtro con mejor expectativa se evalúa en el 30% final fuera de muestra. Como se comparan varias alternativas, la elección aún puede sufrir sobreajuste; el resultado OOS debe tratarse como exploratorio, no como validación definitiva. El umbral de comparación del laboratorio es fijo en 7 para comparar filtros en condiciones homogéneas.
 
-El histórico descargado está limitado a 12.000 velas de 1H (aproximadamente 16 meses), no a cinco años completos. La validación es un primer filtro, no una prueba definitiva: el modelo 1H no replica exactamente la señal multi-timeframe en vivo, y no incluye funding histórico por operación, liquidez, impacto de mercado ni calidad real de ejecución. La selección entre tres umbrales puede seguir sobreajustándose al tramo de desarrollo; conviene probar otros periodos y mercados antes de cualquier uso real.
+El modelo es una aproximación 1H y no replica exactamente la señal multi-timeframe en vivo. Usa entrada en la apertura siguiente, stop de 1 ATR, objetivo de 2 ATR y, si stop y objetivo se tocan en la misma vela, contabiliza primero el stop. Los costes son estimaciones configurables, no ejecuciones reales. No incorpora funding histórico por operación, liquidez ni impacto de mercado.
+
+El histórico está limitado a 12.000 velas de 1H (aproximadamente 16 meses), aunque la descarga solicite un periodo mayor. La rentabilidad pasada no garantiza resultados futuros; no utilizar como sistema probado para operar con dinero real.
 
 ## Ejecutar en ordenador
 ```bash
@@ -28,4 +31,4 @@ streamlit run app.py
 Aloja la app en un servicio compatible con Streamlit (por ejemplo, Streamlit Community Cloud) y abre la URL desde Safari.
 
 ## Datos y seguridad
-La cotización se actualiza periódicamente; no es un feed tick-a-tick. La disponibilidad de datos depende de Binance, la conexión y el alojamiento. Esta herramienta es experimental, no constituye asesoramiento financiero y no debe considerarse un sistema probado para operar con dinero real.
+La cotización se actualiza periódicamente; no es un feed tick-a-tick. La app usa endpoints públicos de Binance y no necesita claves privadas ni permisos de trading. Es una herramienta experimental, no asesoramiento financiero.
