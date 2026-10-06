@@ -63,11 +63,14 @@ def add_indicators(df):
     pl=(x.low<x.low.shift(1))&(x.low<x.low.shift(2))&(x.low<=x.low.shift(-1))&(x.low<=x.low.shift(-2))
     x["ph"]=ph.shift(2).fillna(False).astype(bool)
     x["pl"]=pl.shift(2).fillna(False).astype(bool)
+    # Keep the original pivot price on the later confirmation candle.
+    x["pivot_high"]=x.high.shift(2).where(x["ph"])
+    x["pivot_low"]=x.low.shift(2).where(x["pl"])
     return x
 
 def structure_score(x):
-    highs=x.loc[x.ph,"high"].tail(2).values
-    lows=x.loc[x.pl,"low"].tail(2).values
+    highs=x.loc[x.ph,"pivot_high"].tail(2).values
+    lows=x.loc[x.pl,"pivot_low"].tail(2).values
     hs="—"; ls="—"
     if len(highs)==2: hs="HH" if highs[1]>highs[0] else "LH"
     if len(lows)==2: ls="HL" if lows[1]>lows[0] else "LL"
