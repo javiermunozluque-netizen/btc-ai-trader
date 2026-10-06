@@ -1,4 +1,4 @@
-# BTC AI Trader V1.7
+# BTC AI Trader V1.8
 
 ## Qué es
 Dashboard experimental para BTC/USDT con datos públicos de Binance. No requiere claves de API, no conecta cuentas y no ejecuta órdenes.
@@ -8,25 +8,27 @@ Dashboard experimental para BTC/USDT con datos públicos de Binance. No requiere
 - EMA55/EMA200, RSI, ATR, volumen relativo y estructura HH/HL/LH/LL
 - Open Interest y funding como contexto de derivados
 - Score heurístico LONG/SHORT/WAIT y niveles ilustrativos
-- **Gráfico interactivo de velas japonesas** con EMA55, EMA200 y volumen; zoom, desplazamiento y hover de datos
-- Validación cronológica: comparación de umbrales en desarrollo y evaluación del seleccionado en el tramo OOS
-- Laboratorio: compara filtro base, tendencia EMA, momentum, volumen y estructura con umbral fijo
-- Auditoría OOS: dirección, precios, motivo de salida, R bruto, costes, R neto y duración
-- **Curva de R acumulado OOS** para ver la evolución de la estrategia en vez de depender solo de una tabla
-- Resúmenes por dirección y motivo de salida y exportación CSV
+- Gráfico interactivo de velas japonesas con EMA55, EMA200 y volumen
+- Validación cronológica con comparación de umbrales y tramo OOS
+- Laboratorio que compara cinco filtros técnicos y tres modos de dirección: ambos, LONG solamente y SHORT solamente
+- Gráfico horizontal de expectativa neta por configuración para detectar rápidamente configuraciones débiles
+- Selección del candidato solo en desarrollo, priorizando al menos 15 operaciones (fallback a 5 si no hay candidatos); evaluación posterior en el 30% final OOS
+- Curva de R acumulado, drawdown, resumen por dirección y motivo de salida
+- Auditoría y exportación CSV de las operaciones OOS
 
-## Cambios de diseño V1.7
-- Sustituye el gráfico de líneas básico por velas japonesas interactivas
-- Separa visualmente precio y volumen, con EMA55 y EMA200 superpuestas
-- Añade una curva de resultados acumulados de operaciones OOS y métricas de drawdown
-- Mantiene el diseño adaptable a móvil y el acento naranja inspirado en Bitcoin
+## Cambios de V1.8
+- Evalúa LONG y SHORT por separado para comprobar si un sentido contribuye desproporcionadamente a las pérdidas
+- Compara las combinaciones de filtros técnicos con ambos sentidos y modos de dirección restringidos
+- Añade un gráfico de barras de expectativa neta por configuración y mantiene la curva acumulada OOS
+- Evita priorizar candidatos con menos de 15 operaciones de desarrollo cuando existe una muestra mayor suficiente; si no, relaja el umbral a 5 y deja constancia de que la evidencia es limitada
+- Mantiene el gráfico de velas interactivo y el diseño responsive de V1.7
 
 ## Cómo interpretar los resultados
-La comparación de filtros se hace en el tramo de desarrollo (70% del histórico) y el filtro con mejor expectativa se evalúa en el 30% final fuera de muestra. Como se comparan varias alternativas, la elección puede sufrir sobreajuste; el resultado OOS es exploratorio, no validación definitiva. El umbral del laboratorio es fijo en 7 para comparar filtros en condiciones homogéneas.
+La selección de una configuración se realiza exclusivamente en el tramo de desarrollo (70% inicial). Se evalúa después en el 30% final OOS. Probar múltiples filtros puede producir sobreajuste incluso con esta separación; el resultado es exploratorio y no valida rentabilidad futura. No operar en real basándose solo en este backtest.
 
-El modelo es una aproximación 1H y no replica exactamente la señal multi-timeframe en vivo. Usa entrada en la apertura siguiente, stop de 1 ATR y objetivo de 2 ATR. Si stop y objetivo se tocan en la misma vela, contabiliza primero el stop. Los costes son estimaciones configurables, no ejecuciones reales. No incorpora funding histórico por operación, liquidez ni impacto de mercado.
+El modelo es una aproximación 1H y no replica exactamente la señal multi-timeframe en vivo. Usa entrada en la apertura siguiente, stop de 1 ATR y objetivo de 2 ATR. Si stop y objetivo se tocan en la misma vela, contabiliza primero el stop. Los costes son estimaciones configurables. No incorpora funding histórico por operación, liquidez ni impacto de mercado.
 
-El histórico está limitado a las últimas 12.000 velas de 1H (aproximadamente 16 meses). La evaluación OOS conserva el historial necesario para calcular indicadores, pero solo permite abrir operaciones a partir del corte cronológico. La rentabilidad pasada no garantiza resultados futuros; no utilizar como sistema probado para operar con dinero real.
+El histórico está limitado a las últimas 12.000 velas de 1H (aproximadamente 16 meses). La evaluación OOS conserva el historial para calcular indicadores, pero solo permite abrir operaciones a partir del corte cronológico.
 
 ## Ejecutar en ordenador
 ```bash
