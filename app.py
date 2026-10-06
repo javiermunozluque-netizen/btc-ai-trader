@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.7", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.8", page_icon="₿", layout="wide")
 
 st.markdown("""<style>
 :root{--btc-accent:#f7931a}
@@ -217,7 +217,7 @@ def backtest(df, threshold=6, fee_bps=6, slippage_bps=2, risk_pct=0.5, max_hold=
 
 
 
-def backtest_diagnostic(df, threshold=7, filter_mode="Base", fee_bps=6, slippage_bps=2, risk_pct=0.5, max_hold=48, start_index=220, return_trades=False):
+def backtest_diagnostic(df, threshold=7, filter_mode="Base", fee_bps=6, slippage_bps=2, risk_pct=0.5, max_hold=48, start_index=220, return_trades=False, direction_mode="Both"):
     """Diagnostic backtest with optional causal filters and a per-trade audit log."""
     empty = {"Trades":0,"Win rate %":0.0,"Profit factor":0.0,"Expectancy R":0.0,"Net R":0.0,"Max DD %":0.0,"Net return %":0.0}
     if df.empty or len(df)<300:
@@ -239,6 +239,11 @@ def backtest_diagnostic(df, threshold=7, filter_mode="Base", fee_bps=6, slippage
         if abs(score)<threshold:
             i+=1; continue
         direction=1 if score>=threshold else -1
+        # Direction filters are evaluated at signal time; they do not change the score.
+        if direction_mode=="LONG only" and direction!=1:
+            i+=1; continue
+        if direction_mode=="SHORT only" and direction!=-1:
+            i+=1; continue
         # Each filter is defined using information available at signal time only.
         if filter_mode=="EMA trend" and not ((direction==1 and a.close>a.ema200) or (direction==-1 and a.close<a.ema200)):
             i+=1; continue
@@ -286,8 +291,8 @@ def backtest_diagnostic(df, threshold=7, filter_mode="Base", fee_bps=6, slippage
 st.markdown("""
 <div style="padding:22px 24px;margin:2px 0 16px;border:1px solid rgba(127,140,160,.22);border-radius:18px;background:linear-gradient(115deg,rgba(247,147,26,.12),rgba(127,140,160,.035) 52%,rgba(85,119,255,.08));">
   <div style="font-size:.76rem;font-weight:750;letter-spacing:.14em;text-transform:uppercase;opacity:.72;margin-bottom:7px">QUANT RESEARCH · BTC / USDT</div>
-  <div style="font-size:clamp(1.8rem,4vw,2.7rem);font-weight:850;letter-spacing:-.055em;line-height:1.08">₿ BTC AI Trader <span style="color:#f7931a">/ V1.7</span></div>
-  <div style="margin-top:9px;font-size:.96rem;opacity:.82">Market intelligence · Interactive charts · Quantitative validation</div>
+  <div style="font-size:clamp(1.8rem,4vw,2.7rem);font-weight:850;letter-spacing:-.055em;line-height:1.08">₿ BTC AI Trader <span style="color:#f7931a">/ V1.8</span></div>
+  <div style="margin-top:9px;font-size:.96rem;opacity:.82">Market intelligence · Directional testing · Robust diagnostics</div>
   <div style="display:inline-block;margin-top:15px;padding:5px 10px;border:1px solid rgba(127,140,160,.28);border-radius:99px;font-size:.75rem;font-weight:650">● DATOS PÚBLICOS · SOLO ANÁLISIS · SIN EJECUCIÓN DE ÓRDENES</div>
 </div>
 """,unsafe_allow_html=True)
@@ -353,7 +358,7 @@ def live_dashboard():
     fig.update_xaxes(showgrid=False,row=1,col=1)
     fig.update_xaxes(showgrid=False,row=2,col=1)
     st.plotly_chart(fig,use_container_width=True,config={"displaylogo":False,"scrollZoom":True})
-    st.subheader("Validación cuantitativa · V1.7")
+    st.subheader("Validación cuantitativa · V1.8")
     st.caption("Los análisis se ejecutan solo al pulsar el botón. La prueba fuera de muestra no se utiliza para elegir parámetros.")
     st.write("Validación cronológica: comparación de umbrales en desarrollo y evaluación en el 30% final fuera de muestra (OOS). Modelo 1H simplificado; no replica exactamente la señal multi-timeframe en vivo.")
     b1,b2,b3,b4=st.columns(4)
@@ -361,7 +366,7 @@ def live_dashboard():
     slippage_bps=b2.number_input("Deslizamiento por lado (pb)",min_value=0.0,max_value=100.0,value=2.0,step=1.0,key="bt_slippage_bps")
     risk_pct=b3.number_input("Riesgo por operación (%)",min_value=0.1,max_value=5.0,value=0.5,step=0.1,key="bt_risk_pct")
     max_hold=b4.number_input("Máx. duración (velas 1H)",min_value=1,max_value=240,value=48,step=1,key="bt_max_hold")
-    if st.button("Ejecutar validación V1.7",key="run_backtest_v14"):
+    if st.button("Ejecutar validación V1.8",key="run_backtest_v14"):
         try:
             with st.spinner("Descargando hasta 12.000 velas recientes y calculando métricas. Puede tardar un poco…"):
                 end=int(datetime.now(timezone.utc).timestamp()*1000)
@@ -418,14 +423,14 @@ def live_dashboard():
             export_oos=st.session_state["bt_oos"].rename(columns={"Umbral seleccionado (solo desarrollo)":"Umbral"})
             export_oos["Segmento"]="Fuera de muestra"
             export=pd.concat([export,export_oos],ignore_index=True,sort=False)
-        st.download_button("Descargar informe CSV",export.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_7.csv",mime="text/csv",key="download_backtest_v16")
+        st.download_button("Descargar informe CSV",export.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_8.csv",mime="text/csv",key="download_backtest_v16")
 
     st.divider()
-    st.subheader("Laboratorio cuantitativo · V1.7")
-    st.write("Auditoría por operación y comparación de filtros. Se usa un umbral fijo de 7 para comparar los filtros de forma homogénea. El tramo OOS queda reservado para evaluar el filtro seleccionado en desarrollo; como se prueban varias alternativas, el resultado sigue siendo exploratorio.")
-    if st.button("Ejecutar diagnóstico V1.7",key="run_diagnostic_v16"):
+    st.subheader("Laboratorio cuantitativo · V1.8")
+    st.write("Compara filtros técnicos y dirección de operación con un umbral fijo de 7. La selección se hace solo en desarrollo y se evalúa en el 30% final OOS. Para evitar elegir configuraciones con muy pocas operaciones, se priorizan candidatos con al menos 15 operaciones de desarrollo; aun así, el resultado es exploratorio.")
+    if st.button("Ejecutar diagnóstico V1.8",key="run_diagnostic_v16"):
         try:
-            with st.spinner("Analizando cinco filtros sobre el histórico reciente. Este cálculo puede tardar más de un minuto…"):
+            with st.spinner("Comparando filtros y modos LONG/SHORT sobre el histórico reciente…"):
                 end2=int(datetime.now(timezone.utc).timestamp()*1000)
                 start2=int((datetime.now(timezone.utc)-timedelta(days=365*5)).timestamp()*1000)
                 hist15=paginate_klines(symbol,"1h",start2,end2,12000)
@@ -438,14 +443,24 @@ def live_dashboard():
                     test15=hist15.copy()
                     start_oos15=cut15
                     modes=["Base","EMA trend","Momentum","Volume","Structure"]
+                    directions=["Both","LONG only","SHORT only"]
                     comparison=[]
                     for mode in modes:
-                        met=backtest_diagnostic(dev15,7,mode,fee_bps,slippage_bps,risk_pct,int(max_hold))
-                        comparison.append({"Filtro":mode,**met})
+                        for direction_mode in directions:
+                            met=backtest_diagnostic(dev15,7,mode,fee_bps,slippage_bps,risk_pct,int(max_hold),direction_mode=direction_mode)
+                            comparison.append({"Filtro":mode,"Dirección":direction_mode,**met})
                     comp15=pd.DataFrame(comparison)
-                    ranked=comp15.replace([np.inf,-np.inf],np.nan).sort_values(["Expectancy R","Profit factor"],ascending=False)
-                    chosen15=str(ranked.iloc[0]["Filtro"])
-                    oos15, trades15=backtest_diagnostic(test15,7,chosen15,fee_bps,slippage_bps,risk_pct,int(max_hold),start_index=start_oos15,return_trades=True)
+                    ranked=comp15.replace([np.inf,-np.inf],np.nan)
+                    eligible=ranked[ranked["Trades"]>=15]
+                    if eligible.empty:
+                        eligible=ranked[ranked["Trades"]>=5]
+                    if eligible.empty:
+                        eligible=ranked
+                    ranked=eligible.sort_values(["Expectancy R","Profit factor"],ascending=False)
+                    chosen_filter=str(ranked.iloc[0]["Filtro"])
+                    chosen_direction=str(ranked.iloc[0]["Dirección"])
+                    chosen15=f"{chosen_filter} · {chosen_direction}"
+                    oos15, trades15=backtest_diagnostic(test15,7,chosen_filter,fee_bps,slippage_bps,risk_pct,int(max_hold),start_index=start_oos15,return_trades=True,direction_mode=chosen_direction)
                     # Also retain all OOS trades for a side-by-side long/short and exit-reason diagnosis.
                     st.session_state["diag_compare"]=comp15
                     st.session_state["diag_oos"]=pd.DataFrame([{"Filtro elegido en desarrollo":chosen15,**oos15}])
@@ -460,7 +475,7 @@ def live_dashboard():
         st.error("No se pudo completar el diagnóstico: "+st.session_state["diag_error"])
     if "diag_compare" in st.session_state:
         comp15=st.session_state["diag_compare"]
-        st.caption(f"Histórico: {st.session_state.get('diag_count',0):,} velas 1H · desarrollo: {st.session_state.get('diag_cut',0):,} · OOS: {st.session_state.get('diag_count',0)-st.session_state.get('diag_cut',0):,}. Umbral fijo = 7.")
+        st.caption(f"Histórico: {st.session_state.get('diag_count',0):,} velas 1H · desarrollo: {st.session_state.get('diag_cut',0):,} · OOS: {st.session_state.get('diag_count',0)-st.session_state.get('diag_cut',0):,}. Umbral fijo = 7. Se comparan 15 combinaciones de filtro y dirección.")
         st.success("Diagnóstico completado correctamente.")
         st.markdown("#### Comparación de filtros — desarrollo")
         st.dataframe(comp15.style.format({"Win rate %":"{:.1f}","Profit factor":"{:.2f}","Expectancy R":"{:.3f}","Net R":"{:.2f}","Max DD %":"{:.1f}","Net return %":"{:.1f}"}),use_container_width=True)
@@ -494,7 +509,7 @@ def live_dashboard():
             t2.dataframe(st2.style.format({"Expectativa_R":"{:.3f}","R_neto":"{:.2f}"}),use_container_width=True)
             st.markdown("#### Registro detallado")
             st.dataframe(trades15,use_container_width=True)
-            st.download_button("Descargar operaciones OOS CSV",trades15.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_trades_v1_7.csv",mime="text/csv",key="download_trades_v16")
+            st.download_button("Descargar operaciones OOS CSV",trades15.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_trades_v1_8.csv",mime="text/csv",key="download_trades_v16")
         else:
             st.warning("No se generaron operaciones en el tramo OOS para este filtro.")
 
