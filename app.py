@@ -1,4 +1,4 @@
-# BUILD SYNC: 2026-10-07 V1.9.2
+# BUILD SYNC: 2026-10-07 V1.9.3
 
 import streamlit as st
 import pandas as pd
@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.9.2", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.9.3", page_icon="₿", layout="wide")
 
 st.markdown("""<style>
 :root{--btc-accent:#f7931a}
@@ -228,88 +228,106 @@ def backtest(df, threshold=6, fee_bps=6, slippage_bps=2, risk_pct=0.5, max_hold=
 
 
 def backtest_diagnostic(df, threshold=7, filter_mode="Base", fee_bps=6, slippage_bps=2, risk_pct=0.5, max_hold=48, start_index=220, return_trades=False, direction_mode="Both"):
-    """Diagnostic backtest with optional causal filters and a per-trade audit log."""
-    empty = {"Trades":0,"Win rate %":0.0,"Profit factor":0.0,"Expectancy R":0.0,"Net R":0.0,"Max DD %":0.0,"Net return %":0.0}
+    """Optimized diagnostic: signals and trade outcomes are precomputed once, then 60 configurations are evaluated cheaply."""
+    empty={"Trades":0,"Win rate %":0.0,"Profit factor":0.0,"Expectancy R":0.0,"Net R":0.0,"Max DD %":0.0,"Net return %":0.0}
     if df.empty or len(df)<300:
-        return (empty, pd.DataFrame()) if return_trades else empty
+        return (empty,pd.DataFrame()) if return_trades else empty
+
     x=prepare_diagnostic(df)
-    equity=1.0; peak=1.0; maxdd=0.0; wins=0; gp=0.0; gl=0.0; total_r=0.0; outcomes=[]; logs=[]
+    n=len(x)
+    start_i=max(220,int(start_index))
+    if start_i>=n-2:
+        return (empty,pd.DataFrame()) if return_trades else empty
+
+    # Precompute every signal component once. This is the expensive part; the 60
+    # configurations below only filter these arrays and reuse the same exits.
+    close=x["close"].to_numpy(float); op=x["open"].to_numpy(float)
+    high=x["high"].to_numpy(float); low=x["low"].to_numpy(float)
+    ema55=x["ema55"].to_numpy(float); ema200=x["ema200"].to_numpy(float)
+    rsi_v=x["rsi"].to_numpy(float); atr_v=x["atr"].to_numpy(float)
+    vol_rel=x["vol_rel"].to_numpy(float); stc_v=x["structure_score"].to_numpy(int)
+    open_time=x["open_time"].to_numpy()
+
+    trend=np.zeros(n,dtype=np.int8); conf=np.zeros(n,dtype=np.int8)
+    mom=np.zeros(n,dtype=np.int8); vol=np.zeros(n,dtype=np.int8)
+    valid=np.isfinite(atr_v)&(atr_v>0)&np.isfinite(ema200)&np.isfinite(rsi_v)
+    for i in range(max(220,start_i),n):
+        trend[i]=2 if close[i]>ema55[i]>ema200[i] and ema55[i]>ema55[i-4] else (1 if close[i]>ema55[i] else (-2 if close[i]<ema55[i]<ema200[i] else -1))
+        conf[i]=1 if close[i]>ema55[i] and ema55[i]>ema55[i-4] else (-1 if close[i]<ema55[i] and ema55[i]<ema55[i-4] else 0)
+        mom[i]=1 if 50<=rsi_v[i]<=65 and rsi_v[i]>rsi_v[i-3] else (-1 if rsi_v[i]<45 else 0)
+        vol[i]=1 if vol_rel[i]>=1.2 and close[i]>op[i] else (-1 if vol_rel[i]>=1.2 and close[i]<op[i] else 0)
+    score=trend.astype(np.int16)+conf.astype(np.int16)+mom.astype(np.int16)+vol.astype(np.int16)+stc_v.astype(np.int16)
+    direction=np.where(score>=5,1,np.where(score<=-5,-1,0)).astype(np.int8)
+
+    # Precompute the outcome of each possible signal once. This preserves the
+    # original next-open entry, 1 ATR stop, 2 ATR target, max-hold and stop-first rules.
     cost_side=(float(fee_bps)+float(slippage_bps))/10000.0
-    i=max(220,int(start_index))
-    while i < len(x)-2:
-        a=x.iloc[i]
-        if not np.isfinite(a.atr) or a.atr<=0 or not np.isfinite(a.ema200) or not np.isfinite(a.rsi):
-            i+=1; continue
-        trend=2 if a.close>a.ema55>a.ema200 and a.ema55>x.ema55.iloc[i-4] else (1 if a.close>a.ema55 else (-2 if a.close<a.ema55<a.ema200 else -1))
-        conf=1 if a.close>a.ema55 and a.ema55>x.ema55.iloc[i-4] else (-1 if a.close<a.ema55 and a.ema55<x.ema55.iloc[i-4] else 0)
-        mom=1 if 50<=a.rsi<=65 and a.rsi>x.rsi.iloc[i-3] else (-1 if a.rsi<45 else 0)
-        vol=1 if a.vol_rel>=1.2 and a.close>a.open else (-1 if a.vol_rel>=1.2 and a.close<a.open else 0)
-        stc=int(x.structure_score.iloc[i])
-        score=trend+conf+mom+vol+stc
-        if abs(score)<threshold:
-            i+=1; continue
-        direction=1 if score>=threshold else -1
-        # Direction filters are evaluated at signal time; they do not change the score.
-        if direction_mode=="LONG only" and direction!=1:
-            i+=1; continue
-        if direction_mode=="SHORT only" and direction!=-1:
-            i+=1; continue
-        # Each filter is defined using information available at signal time only.
-        if filter_mode=="EMA trend" and not ((direction==1 and a.close>a.ema200) or (direction==-1 and a.close<a.ema200)):
-            i+=1; continue
-        if filter_mode=="Momentum" and not ((direction==1 and 50<=a.rsi<=65 and a.rsi>x.rsi.iloc[i-3]) or (direction==-1 and a.rsi<45)):
-            i+=1; continue
-        if filter_mode=="Volume" and not (np.isfinite(a.vol_rel) and a.vol_rel>=1.2):
-            i+=1; continue
-        if filter_mode=="Structure" and not ((direction==1 and stc>0) or (direction==-1 and stc<0)):
-            i+=1; continue
-        entry_idx=i+1; entry=float(x.open.iloc[entry_idx]); risk=float(a.atr)
-        stop=entry-direction*risk; target=entry+direction*2*risk
-        exit_price=None; exit_idx=None; reason="Time exit"
-        last=min(entry_idx+int(max_hold),len(x)-1)
+    outcomes={}
+    for i in range(max(220,start_i),n-2):
+        if direction[i]==0 or not valid[i]:
+            continue
+        d=int(direction[i]); entry_idx=i+1; entry=float(op[entry_idx]); risk=float(atr_v[i])
+        stop=entry-d*risk; target=entry+d*2*risk
+        last=min(entry_idx+int(max_hold),n-1)
+        exit_idx=last; exit_price=float(close[last]); reason="Time exit"
         for j in range(entry_idx,last+1):
-            bar=x.iloc[j]
-            if direction==1:
-                if bar.low<=stop: exit_price=stop; exit_idx=j; reason="Stop"; break
-                if bar.high>=target: exit_price=target; exit_idx=j; reason="Target"; break
+            if d==1:
+                if low[j]<=stop: exit_idx=j; exit_price=stop; reason="Stop"; break
+                if high[j]>=target: exit_idx=j; exit_price=target; reason="Target"; break
             else:
-                if bar.high>=stop: exit_price=stop; exit_idx=j; reason="Stop"; break
-                if bar.low<=target: exit_price=target; exit_idx=j; reason="Target"; break
-        if exit_price is None:
-            exit_idx=last; exit_price=float(x.close.iloc[exit_idx])
-        gross_r=direction*(exit_price-entry)/risk
+                if high[j]>=stop: exit_idx=j; exit_price=stop; reason="Stop"; break
+                if low[j]<=target: exit_idx=j; exit_price=target; reason="Target"; break
+        gross_r=d*(exit_price-entry)/risk
         costs_r=(2*cost_side*entry)/risk
         net_r=gross_r-costs_r
-        outcomes.append(net_r); total_r+=net_r
-        if net_r>0: wins+=1; gp+=net_r
-        else: gl+=abs(net_r)
-        equity*=max(0.0,1.0+(float(risk_pct)/100.0)*net_r)
-        peak=max(peak,equity)
-        if peak>0: maxdd=max(maxdd,(peak-equity)/peak)
-        fee_cost_side=float(fee_bps)/10000.0*entry
-        slip_cost_side=float(slippage_bps)/10000.0*entry
-        fee_total=2*fee_cost_side
-        slip_total=2*slip_cost_side
-        total_cost_usdt=fee_total+slip_total
-        ambiguous_bar=(direction==1 and x.low.iloc[exit_idx]<=stop and x.high.iloc[exit_idx]>=target) or (direction==-1 and x.high.iloc[exit_idx]>=stop and x.low.iloc[exit_idx]<=target)
-        logs.append({"Entrada UTC":x.open_time.iloc[entry_idx],"Salida UTC":x.open_time.iloc[exit_idx],
-                     "Dirección":"LONG" if direction==1 else "SHORT","Filtro":filter_mode,"Score":score,
-                     "Entrada":entry,"Salida":exit_price,"Stop inicial":stop,"Objetivo inicial":target,
-                     "Motivo salida":reason,"R bruto":gross_r,"Comisión (USDT)":fee_total,
-                     "Deslizamiento (USDT)":slip_total,"Costes (USDT)":total_cost_usdt,
-                     "Costes (R)":costs_r,"R neto":net_r,"Duración (h)":exit_idx-entry_idx,
-                     "Misma vela":exit_idx==entry_idx,"Vela ambigua":bool(ambiguous_bar)})
-        i=exit_idx+1
-    summary={"Trades":len(outcomes),"Win rate %":wins/len(outcomes)*100 if outcomes else 0.0,
-             "Profit factor":gp/gl if gl>0 else (float("inf") if gp>0 else 0.0),
-             "Expectancy R":float(np.mean(outcomes)) if outcomes else 0.0,"Net R":total_r,
-             "Max DD %":maxdd*100,"Net return %":(equity-1)*100}
-    return (summary,pd.DataFrame(logs)) if return_trades else summary
+        fee_total=2*(float(fee_bps)/10000.0*entry)
+        slip_total=2*(float(slippage_bps)/10000.0*entry)
+        ambiguous=(d==1 and low[exit_idx]<=stop and high[exit_idx]>=target) or (d==-1 and high[exit_idx]>=stop and low[exit_idx]<=target)
+        outcomes[i]=(entry_idx,exit_idx,d,score[i],entry,exit_price,stop,target,reason,gross_r,net_r,costs_r,fee_total,slip_total,fee_total+slip_total,bool(exit_idx==entry_idx),bool(ambiguous))
+
+    # Evaluate one configuration. Only candidate selection and one-position-at-a-time
+    # sequencing remain, so the 60 tests are very fast.
+    def evaluate(th, mode, dmode, want_logs=False):
+        equity=1.0; peak=1.0; maxdd=0.0; wins=0; gp=0.0; gl=0.0; total_r=0.0; logs=[]; count=0; last_exit=-1
+        for i,data in outcomes.items():
+            if i < start_i or i<=last_exit or abs(int(score[i]))<th:
+                continue
+            entry_idx,exit_idx,d,sc,entry,exit_price,stop,target,reason,gross_r,net_r,costs_r,fee_total,slip_total,total_cost,same_bar,ambiguous=data
+            if dmode=="LONG only" and d!=1: continue
+            if dmode=="SHORT only" and d!=-1: continue
+            if mode=="EMA trend" and not ((d==1 and close[i]>ema200[i]) or (d==-1 and close[i]<ema200[i])): continue
+            if mode=="Momentum" and not ((d==1 and 50<=rsi_v[i]<=65 and rsi_v[i]>rsi_v[i-3]) or (d==-1 and rsi_v[i]<45)): continue
+            if mode=="Volume" and not (np.isfinite(vol_rel[i]) and vol_rel[i]>=1.2): continue
+            if mode=="Structure" and not ((d==1 and stc_v[i]>0) or (d==-1 and stc_v[i]<0)): continue
+
+            count+=1; total_r+=net_r
+            if net_r>0: wins+=1; gp+=net_r
+            else: gl+=abs(net_r)
+            equity*=max(0.0,1.0+(float(risk_pct)/100.0)*net_r)
+            peak=max(peak,equity)
+            if peak>0: maxdd=max(maxdd,(peak-equity)/peak)
+            last_exit=exit_idx
+            if want_logs:
+                logs.append({"Entrada UTC":open_time[entry_idx],"Salida UTC":open_time[exit_idx],
+                    "Dirección":"LONG" if d==1 else "SHORT","Filtro":mode,"Score":int(sc),
+                    "Entrada":entry,"Salida":exit_price,"Stop inicial":stop,"Objetivo inicial":target,
+                    "Motivo salida":reason,"R bruto":gross_r,"Comisión (USDT)":fee_total,
+                    "Deslizamiento (USDT)":slip_total,"Costes (USDT)":total_cost,
+                    "Costes (R)":costs_r,"R neto":net_r,"Duración (h)":exit_idx-entry_idx,
+                    "Misma vela":same_bar,"Vela ambigua":ambiguous})
+        expectancy=total_r/count if count else 0.0
+        summary={"Trades":count,"Win rate %":wins/count*100 if count else 0.0,
+            "Profit factor":gp/gl if gl>0 else (float("inf") if gp>0 else 0.0),
+            "Expectancy R":expectancy,"Net R":total_r,"Max DD %":maxdd*100,
+            "Net return %":(equity-1)*100}
+        return (summary,pd.DataFrame(logs)) if want_logs else summary
+
+    return evaluate(int(threshold),filter_mode,direction_mode,return_trades)
 
 st.markdown("""
 <div style="padding:22px 24px;margin:2px 0 16px;border:1px solid rgba(127,140,160,.22);border-radius:18px;background:linear-gradient(115deg,rgba(247,147,26,.12),rgba(127,140,160,.035) 52%,rgba(85,119,255,.08));">
   <div style="font-size:.76rem;font-weight:750;letter-spacing:.14em;text-transform:uppercase;opacity:.72;margin-bottom:7px">QUANT RESEARCH · BTC / USDT</div>
-  <div style="font-size:clamp(1.8rem,4vw,2.7rem);font-weight:850;letter-spacing:-.055em;line-height:1.08">₿ BTC AI Trader <span style="color:#f7931a">/ V1.9.2</span></div>
+  <div style="font-size:clamp(1.8rem,4vw,2.7rem);font-weight:850;letter-spacing:-.055em;line-height:1.08">₿ BTC AI Trader <span style="color:#f7931a">/ V1.9.3</span></div>
   <div style="margin-top:9px;font-size:.96rem;opacity:.82">Market intelligence · Backtest audit · Robust diagnostics</div>
   <div style="display:inline-block;margin-top:15px;padding:5px 10px;border:1px solid rgba(127,140,160,.28);border-radius:99px;font-size:.75rem;font-weight:650">● DATOS PÚBLICOS · SOLO ANÁLISIS · SIN EJECUCIÓN DE ÓRDENES</div>
 </div>
@@ -376,7 +394,7 @@ def live_dashboard():
     fig.update_xaxes(showgrid=False,row=1,col=1)
     fig.update_xaxes(showgrid=False,row=2,col=1)
     st.plotly_chart(fig,use_container_width=True,config={"displaylogo":False,"scrollZoom":True})
-    st.subheader("Validación cuantitativa · V1.9.2")
+    st.subheader("Validación cuantitativa · V1.9.3")
     st.caption("Los análisis se ejecutan solo al pulsar el botón. V1.9 añade una auditoría de ejecución: causalidad, velas ambiguas, salidas en la misma vela y sensibilidad a costes.")
     st.write("Validación cronológica: comparación de umbrales en desarrollo y evaluación en el 30% final fuera de muestra (OOS). Modelo 1H simplificado; no replica exactamente la señal multi-timeframe en vivo.")
     b1,b2,b3,b4=st.columns(4)
@@ -458,12 +476,12 @@ def live_dashboard():
             export_oos=st.session_state["bt_oos"].rename(columns={"Umbral seleccionado (solo desarrollo)":"Umbral"})
             export_oos["Segmento"]="Fuera de muestra"
             export=pd.concat([export,export_oos],ignore_index=True,sort=False)
-        st.download_button("Descargar informe CSV",export.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_9_2.csv",mime="text/csv",key="download_backtest_v19")
+        st.download_button("Descargar informe CSV",export.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_9_3.csv",mime="text/csv",key="download_backtest_v19")
 
     st.divider()
-    st.subheader("Laboratorio cuantitativo · V1.9")
-    st.write("Compara filtros técnicos y dirección de operación con un umbral fijo de 7. La selección se hace solo en desarrollo y se evalúa en el 30% final OOS. Para evitar elegir configuraciones con muy pocas operaciones, se priorizan candidatos con al menos 15 operaciones de desarrollo; aun así, el resultado es exploratorio.")
-    if st.button("Ejecutar diagnóstico V1.9",key="run_diagnostic_v19"):
+    st.subheader("Laboratorio cuantitativo · V1.9.3")
+    st.write("Compara filtros técnicos y dirección de operación con 4 umbrales (5/6/7/8), 5 filtros y 3 direcciones. La selección se hace solo en desarrollo y se evalúa en el 30% final OOS. Para evitar elegir configuraciones con muy pocas operaciones, se priorizan candidatos con al menos 15 operaciones de desarrollo; aun así, el resultado es exploratorio.")
+    if st.button("Ejecutar diagnóstico V1.9.3",key="run_diagnostic_v193"):
         try:
             with st.spinner("Comparando filtros y modos LONG/SHORT sobre el histórico reciente…"):
                 end2=int(datetime.now(timezone.utc).timestamp()*1000)
@@ -593,7 +611,7 @@ def live_dashboard():
 
             st.markdown("#### Registro detallado")
             st.dataframe(trades15,use_container_width=True)
-            st.download_button("Descargar operaciones OOS CSV",trades15.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_trades_v1_9_2.csv",mime="text/csv",key="download_trades_v192")
+            st.download_button("Descargar operaciones OOS CSV",trades15.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_trades_v1_9_3.csv",mime="text/csv",key="download_trades_v192")
         else:
             st.warning("No se generaron operaciones en el tramo OOS para este filtro.")
 
