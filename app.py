@@ -94,6 +94,15 @@ def add_indicators(df):
     x["pivot_low"]=x.low.shift(2).where(x["pl"])
     return x
 
+@st.cache_data(show_spinner=False)
+def prepare_diagnostic(df):
+    x=add_indicators(df).reset_index(drop=True).copy()
+    stc_vals=np.zeros(len(x),dtype=int)
+    for k in range(220,len(x)):
+        stc_vals[k]=structure_score(x.iloc[max(0,k-60):k+1])[0]
+    x["structure_score"]=stc_vals
+    return x
+
 def structure_score(x):
     highs=x.loc[x.ph,"pivot_high"].tail(2).values
     lows=x.loc[x.pl,"pivot_low"].tail(2).values
@@ -160,7 +169,7 @@ def backtest(df, threshold=6, fee_bps=6, slippage_bps=2, risk_pct=0.5, max_hold=
     if df.empty or len(df) < 300:
         return {"Trades": 0, "Win rate %": 0.0, "Profit factor": 0.0, "Expectancy R": 0.0,
                 "Net R": 0.0, "Max DD %": 0.0, "Net return %": 0.0}
-    x=add_indicators(df).reset_index(drop=True)
+    x=prepare_diagnostic(df)
     equity=1.0; peak=1.0; maxdd=0.0
     trades=0; wins=0; gross_profit=0.0; gross_loss=0.0; total_r=0.0; outcomes=[]
     cost_per_side=(float(fee_bps)+float(slippage_bps))/10000.0
@@ -235,7 +244,7 @@ def backtest_diagnostic(df, threshold=7, filter_mode="Base", fee_bps=6, slippage
         conf=1 if a.close>a.ema55 and a.ema55>x.ema55.iloc[i-4] else (-1 if a.close<a.ema55 and a.ema55<x.ema55.iloc[i-4] else 0)
         mom=1 if 50<=a.rsi<=65 and a.rsi>x.rsi.iloc[i-3] else (-1 if a.rsi<45 else 0)
         vol=1 if a.vol_rel>=1.2 and a.close>a.open else (-1 if a.vol_rel>=1.2 and a.close<a.open else 0)
-        stc,_,_=structure_score(x.iloc[max(0,i-60):i+1])
+        stc=int(x.structure_score.iloc[i])
         score=trend+conf+mom+vol+stc
         if abs(score)<threshold:
             i+=1; continue
