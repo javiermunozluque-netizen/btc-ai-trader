@@ -1,4 +1,4 @@
-# BUILD SYNC: 2026-10-07 V1.9.3
+# BUILD SYNC: 2026-10-07 V1.9.4
 
 import streamlit as st
 import pandas as pd
@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.9.3", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.9.4", page_icon="₿", layout="wide")
 
 st.markdown("""<style>
 :root{--btc-accent:#f7931a}
@@ -324,10 +324,54 @@ def backtest_diagnostic(df, threshold=7, filter_mode="Base", fee_bps=6, slippage
 
     return evaluate(int(threshold),filter_mode,direction_mode,return_trades)
 
+
+def diagnostic_integrity(df, start_index=220):
+    """Audit the diagnostic signal space without executing trades."""
+    if df.empty or len(df) < 300:
+        return pd.DataFrame(), pd.DataFrame()
+    x=prepare_diagnostic(df)
+    n=len(x); start_i=max(220,int(start_index))
+    if start_i>=n-2: return pd.DataFrame(),pd.DataFrame()
+    close=x["close"].to_numpy(float); op=x["open"].to_numpy(float)
+    ema55=x["ema55"].to_numpy(float); ema200=x["ema200"].to_numpy(float)
+    rsi_v=x["rsi"].to_numpy(float); atr_v=x["atr"].to_numpy(float)
+    vol_rel=x["vol_rel"].to_numpy(float); stc_v=x["structure_score"].to_numpy(int)
+    trend=np.zeros(n,dtype=np.int8); conf=np.zeros(n,dtype=np.int8); mom=np.zeros(n,dtype=np.int8); vol=np.zeros(n,dtype=np.int8)
+    valid=np.isfinite(atr_v)&(atr_v>0)&np.isfinite(ema200)&np.isfinite(rsi_v)
+    for i in range(start_i,n):
+        trend[i]=2 if close[i]>ema55[i]>ema200[i] and ema55[i]>ema55[i-4] else (1 if close[i]>ema55[i] else (-2 if close[i]<ema55[i]<ema200[i] else -1))
+        conf[i]=1 if close[i]>ema55[i] and ema55[i]>ema55[i-4] else (-1 if close[i]<ema55[i] and ema55[i]<ema55[i-4] else 0)
+        mom[i]=1 if 50<=rsi_v[i]<=65 and rsi_v[i]>rsi_v[i-3] else (-1 if rsi_v[i]<45 else 0)
+        vol[i]=1 if np.isfinite(vol_rel[i]) and vol_rel[i]>=1.2 and close[i]>op[i] else (-1 if np.isfinite(vol_rel[i]) and vol_rel[i]>=1.2 and close[i]<op[i] else 0)
+    score=trend.astype(np.int16)+conf.astype(np.int16)+mom.astype(np.int16)+vol.astype(np.int16)+stc_v.astype(np.int16)
+    direction=np.where(score>0,1,np.where(score<0,-1,0)).astype(np.int8)
+    rows=[]; signatures={}
+    for th in [5,6,7,8]:
+        for mode in ["Base","EMA trend","Momentum","Volume","Structure"]:
+            for dmode in ["Both","LONG only","SHORT only"]:
+                mask=valid&(np.abs(score)>=th)
+                if dmode=="LONG only": mask &= direction==1
+                elif dmode=="SHORT only": mask &= direction==-1
+                if mode=="EMA trend": mask &= np.where(direction==1,close>ema200,np.where(direction==-1,close<ema200,False))
+                elif mode=="Momentum": mask &= np.where(direction==1,(rsi_v>=50)&(rsi_v<=65)&(rsi_v>np.roll(rsi_v,3)),np.where(direction==-1,rsi_v<45,False))
+                elif mode=="Volume": mask &= np.isfinite(vol_rel)&(vol_rel>=1.2)
+                elif mode=="Structure": mask &= np.where(direction==1,stc_v>0,np.where(direction==-1,stc_v<0,False))
+                idx=np.flatnonzero(mask&(np.arange(n)>=start_i))
+                signatures[(th,mode,dmode)]=tuple(idx.tolist())
+                rows.append({"Umbral":th,"Filtro":mode,"Dirección":dmode,"Señales candidatas":int(len(idx))})
+    audit=pd.DataFrame(rows)
+    groups=[]
+    for th in [5,6,7,8]:
+        for dmode in ["Both","LONG only","SHORT only"]:
+            keys=[(th,m,dmode) for m in ["Base","EMA trend","Momentum","Volume","Structure"]]
+            unique_sets=len(set(signatures[k] for k in keys))
+            groups.append({"Umbral":th,"Dirección":dmode,"Conjuntos de señales distintos":unique_sets,"Filtros realmente diferenciados":"Sí" if unique_sets>1 else "No"})
+    return audit,pd.DataFrame(groups)
+
 st.markdown("""
 <div style="padding:22px 24px;margin:2px 0 16px;border:1px solid rgba(127,140,160,.22);border-radius:18px;background:linear-gradient(115deg,rgba(247,147,26,.12),rgba(127,140,160,.035) 52%,rgba(85,119,255,.08));">
   <div style="font-size:.76rem;font-weight:750;letter-spacing:.14em;text-transform:uppercase;opacity:.72;margin-bottom:7px">QUANT RESEARCH · BTC / USDT</div>
-  <div style="font-size:clamp(1.8rem,4vw,2.7rem);font-weight:850;letter-spacing:-.055em;line-height:1.08">₿ BTC AI Trader <span style="color:#f7931a">/ V1.9.3</span></div>
+  <div style="font-size:clamp(1.8rem,4vw,2.7rem);font-weight:850;letter-spacing:-.055em;line-height:1.08">₿ BTC AI Trader <span style="color:#f7931a">/ V1.9.4</span></div>
   <div style="margin-top:9px;font-size:.96rem;opacity:.82">Market intelligence · Backtest audit · Robust diagnostics</div>
   <div style="display:inline-block;margin-top:15px;padding:5px 10px;border:1px solid rgba(127,140,160,.28);border-radius:99px;font-size:.75rem;font-weight:650">● DATOS PÚBLICOS · SOLO ANÁLISIS · SIN EJECUCIÓN DE ÓRDENES</div>
 </div>
@@ -394,7 +438,7 @@ def live_dashboard():
     fig.update_xaxes(showgrid=False,row=1,col=1)
     fig.update_xaxes(showgrid=False,row=2,col=1)
     st.plotly_chart(fig,use_container_width=True,config={"displaylogo":False,"scrollZoom":True})
-    st.subheader("Validación cuantitativa · V1.9.3")
+    st.subheader("Validación cuantitativa · V1.9.4")
     st.caption("Los análisis se ejecutan solo al pulsar el botón. V1.9 añade una auditoría de ejecución: causalidad, velas ambiguas, salidas en la misma vela y sensibilidad a costes.")
     st.write("Validación cronológica: comparación de umbrales en desarrollo y evaluación en el 30% final fuera de muestra (OOS). Modelo 1H simplificado; no replica exactamente la señal multi-timeframe en vivo.")
     b1,b2,b3,b4=st.columns(4)
@@ -476,12 +520,12 @@ def live_dashboard():
             export_oos=st.session_state["bt_oos"].rename(columns={"Umbral seleccionado (solo desarrollo)":"Umbral"})
             export_oos["Segmento"]="Fuera de muestra"
             export=pd.concat([export,export_oos],ignore_index=True,sort=False)
-        st.download_button("Descargar informe CSV",export.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_9_3.csv",mime="text/csv",key="download_backtest_v19")
+        st.download_button("Descargar informe CSV",export.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_9_4.csv",mime="text/csv",key="download_backtest_v19")
 
     st.divider()
-    st.subheader("Laboratorio cuantitativo · V1.9.3")
+    st.subheader("Laboratorio cuantitativo · V1.9.4")
     st.write("Compara filtros técnicos y dirección de operación con 4 umbrales (5/6/7/8), 5 filtros y 3 direcciones. La selección se hace solo en desarrollo y se evalúa en el 30% final OOS. Para evitar elegir configuraciones con muy pocas operaciones, se priorizan candidatos con al menos 15 operaciones de desarrollo; aun así, el resultado es exploratorio.")
-    if st.button("Ejecutar diagnóstico V1.9.3",key="run_diagnostic_v193"):
+    if st.button("Ejecutar diagnóstico V1.9.4",key="run_diagnostic_v193"):
         try:
             with st.spinner("Comparando filtros y modos LONG/SHORT sobre el histórico reciente…"):
                 end2=int(datetime.now(timezone.utc).timestamp()*1000)
@@ -546,6 +590,25 @@ def live_dashboard():
         comp_fig.update_yaxes(showgrid=False)
         st.plotly_chart(comp_fig,use_container_width=True,config={"displaylogo":False})
         st.caption("Verde = expectativa media positiva en desarrollo; rojo = negativa. La configuración se elige solo con el tramo de desarrollo y después se evalúa en OOS.")
+        st.markdown("#### 🧪 Diagnostic Integrity — V1.9.4")
+        st.caption("Auditoría del motor de señales: comprueba cuántas señales candidatas genera cada filtro y si los cinco filtros producen conjuntos realmente distintos.")
+        integrity_audit, integrity_unique=diagnostic_integrity(dev15,start_index=0)
+        if not integrity_audit.empty:
+            im1,im2,im3=st.columns(3)
+            n7=int(integrity_audit[(integrity_audit["Umbral"]==7)&(integrity_audit["Filtro"]=="Base")&(integrity_audit["Dirección"]=="Both")]["Señales candidatas"].iloc[0])
+            n8=int(integrity_audit[(integrity_audit["Umbral"]==8)&(integrity_audit["Filtro"]=="Base")&(integrity_audit["Dirección"]=="Both")]["Señales candidatas"].iloc[0])
+            im1.metric("Score máximo teórico","7")
+            im2.metric("Señales Score 7",n7)
+            im3.metric("Señales Score 8",n8)
+            st.info("El score máximo es 7 (= tendencia 2 + confianza 1 + momentum 1 + volumen 1 + estructura 2). Por eso Score 8 no puede generar señales. En Score 7 todos los componentes positivos están en su máximo, así que es normal que los filtros sean equivalentes.",icon="🔎")
+            st.dataframe(integrity_unique,use_container_width=True,hide_index=True)
+            iv=integrity_audit.pivot_table(index=["Umbral","Filtro"],columns="Dirección",values="Señales candidatas",aggfunc="first").reset_index()
+            iv.columns.name=None
+            st.dataframe(iv,use_container_width=True,hide_index=True)
+            if (integrity_unique["Conjuntos de señales distintos"]>1).any():
+                st.success("Integridad OK: los filtros sí modifican el conjunto de señales en al menos un umbral/dirección.")
+            else:
+                st.error("Integridad dudosa: ningún filtro modifica las señales.")
         st.markdown("#### Tabla detallada — desarrollo")
         st.dataframe(comp15.style.format({"Win rate %":"{:.1f}","Profit factor":"{:.2f}","Expectancy R":"{:.3f}","Net R":"{:.2f}","Max DD %":"{:.1f}","Net return %":"{:.1f}"}),use_container_width=True)
         st.markdown("#### Evaluación fuera de muestra")
@@ -634,7 +697,7 @@ def live_dashboard():
             export_trades["Score operación"]=export_trades["Score"]
 
             export_all=pd.concat([export_cfg,export_trades],ignore_index=True,sort=False)
-            st.download_button("Descargar informe completo CSV",export_all.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_diagnostico_completo_v1_9_3.csv",mime="text/csv",key="download_trades_v193")
+            st.download_button("Descargar informe completo CSV",export_all.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_diagnostico_completo_v1_9_4.csv",mime="text/csv",key="download_trades_v193")
         else:
             st.warning("No se generaron operaciones en el tramo OOS para este filtro.")
 
