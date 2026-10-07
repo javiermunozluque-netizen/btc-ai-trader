@@ -611,7 +611,30 @@ def live_dashboard():
 
             st.markdown("#### Registro detallado")
             st.dataframe(trades15,use_container_width=True)
-            st.download_button("Descargar operaciones OOS CSV",trades15.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_trades_v1_9_3.csv",mime="text/csv",key="download_trades_v192")
+            # Exportación única: las 60 configuraciones + operaciones OOS del modelo elegido.
+            export_cfg=comp15.copy()
+            export_cfg["Tipo registro"]="Configuración"
+            export_cfg["Configuración"]=export_cfg["Filtro"]+" · "+export_cfg["Dirección"]
+            export_cfg["Filtro elegido OOS"]=chosen15
+            export_cfg["Segmento"]="Desarrollo"
+            export_cfg["Entrada UTC"]=pd.NaT
+            export_cfg["Salida UTC"]=pd.NaT
+            export_cfg["R neto operación"]=np.nan
+            export_cfg["Motivo salida"]=""
+            export_cfg["Dirección operación"]=""
+            export_cfg["Score operación"]=np.nan
+
+            export_trades=trades15.copy()
+            export_trades["Tipo registro"]="Operación OOS"
+            export_trades["Configuración"]=chosen15
+            export_trades["Filtro elegido OOS"]=chosen15
+            export_trades["Segmento"]="Fuera de muestra"
+            export_trades["R neto operación"]=export_trades["R neto"]
+            export_trades["Dirección operación"]=export_trades["Dirección"]
+            export_trades["Score operación"]=export_trades["Score"]
+
+            export_all=pd.concat([export_cfg,export_trades],ignore_index=True,sort=False)
+            st.download_button("Descargar informe completo CSV",export_all.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_diagnostico_completo_v1_9_3.csv",mime="text/csv",key="download_trades_v193")
         else:
             st.warning("No se generaron operaciones en el tramo OOS para este filtro.")
 
