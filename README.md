@@ -1,4 +1,4 @@
-# BTC AI Trader V1.8
+# BTC AI Trader V1.9
 
 ## Qué es
 Dashboard experimental para BTC/USDT con datos públicos de Binance. No requiere claves de API, no conecta cuentas y no ejecuta órdenes.
@@ -16,7 +16,7 @@ Dashboard experimental para BTC/USDT con datos públicos de Binance. No requiere
 - Curva de R acumulado, drawdown, resumen por dirección y motivo de salida
 - Auditoría y exportación CSV de las operaciones OOS
 
-## Cambios de V1.8
+## Cambios de V1.9
 - Evalúa LONG y SHORT por separado para comprobar si un sentido contribuye desproporcionadamente a las pérdidas
 - Compara las combinaciones de filtros técnicos con ambos sentidos y modos de dirección restringidos
 - Añade un gráfico de barras de expectativa neta por configuración y mantiene la curva acumulada OOS
@@ -41,3 +41,11 @@ Aloja la app en un servicio compatible con Streamlit (por ejemplo, Streamlit Com
 
 ## Datos y seguridad
 La app usa endpoints públicos de Binance y no necesita claves privadas ni permisos de trading. Es una herramienta experimental, no asesoramiento financiero.
+
+
+### V1.9 — auditoría de backtest
+- Auditoría explícita de salidas de 0h y operaciones que terminan en la misma vela.
+- Detección de velas ambiguas cuando OHLC toca simultáneamente stop y objetivo; se aplica stop-first.
+- Desglose por operación de comisión, deslizamiento y coste total en USDT y R.
+- Sensibilidad del resultado OOS a costes de 0–20 pb ida+vuelta.
+- Mantiene separación desarrollo/OOS y selección de dirección/filtro solo en desarrollo.
