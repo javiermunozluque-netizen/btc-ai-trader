@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.9.1", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.9.2", page_icon="₿", layout="wide")
 
 st.markdown("""<style>
 :root{--btc-accent:#f7931a}
@@ -300,7 +300,7 @@ def backtest_diagnostic(df, threshold=7, filter_mode="Base", fee_bps=6, slippage
 st.markdown("""
 <div style="padding:22px 24px;margin:2px 0 16px;border:1px solid rgba(127,140,160,.22);border-radius:18px;background:linear-gradient(115deg,rgba(247,147,26,.12),rgba(127,140,160,.035) 52%,rgba(85,119,255,.08));">
   <div style="font-size:.76rem;font-weight:750;letter-spacing:.14em;text-transform:uppercase;opacity:.72;margin-bottom:7px">QUANT RESEARCH · BTC / USDT</div>
-  <div style="font-size:clamp(1.8rem,4vw,2.7rem);font-weight:850;letter-spacing:-.055em;line-height:1.08">₿ BTC AI Trader <span style="color:#f7931a">/ V1.9.1</span></div>
+  <div style="font-size:clamp(1.8rem,4vw,2.7rem);font-weight:850;letter-spacing:-.055em;line-height:1.08">₿ BTC AI Trader <span style="color:#f7931a">/ V1.9.2</span></div>
   <div style="margin-top:9px;font-size:.96rem;opacity:.82">Market intelligence · Backtest audit · Robust diagnostics</div>
   <div style="display:inline-block;margin-top:15px;padding:5px 10px;border:1px solid rgba(127,140,160,.28);border-radius:99px;font-size:.75rem;font-weight:650">● DATOS PÚBLICOS · SOLO ANÁLISIS · SIN EJECUCIÓN DE ÓRDENES</div>
 </div>
@@ -367,7 +367,7 @@ def live_dashboard():
     fig.update_xaxes(showgrid=False,row=1,col=1)
     fig.update_xaxes(showgrid=False,row=2,col=1)
     st.plotly_chart(fig,use_container_width=True,config={"displaylogo":False,"scrollZoom":True})
-    st.subheader("Validación cuantitativa · V1.9.1")
+    st.subheader("Validación cuantitativa · V1.9.2")
     st.caption("Los análisis se ejecutan solo al pulsar el botón. V1.9 añade una auditoría de ejecución: causalidad, velas ambiguas, salidas en la misma vela y sensibilidad a costes.")
     st.write("Validación cronológica: comparación de umbrales en desarrollo y evaluación en el 30% final fuera de muestra (OOS). Modelo 1H simplificado; no replica exactamente la señal multi-timeframe en vivo.")
     b1,b2,b3,b4=st.columns(4)
@@ -449,7 +449,7 @@ def live_dashboard():
             export_oos=st.session_state["bt_oos"].rename(columns={"Umbral seleccionado (solo desarrollo)":"Umbral"})
             export_oos["Segmento"]="Fuera de muestra"
             export=pd.concat([export,export_oos],ignore_index=True,sort=False)
-        st.download_button("Descargar informe CSV",export.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_9_1.csv",mime="text/csv",key="download_backtest_v19")
+        st.download_button("Descargar informe CSV",export.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_9_2.csv",mime="text/csv",key="download_backtest_v19")
 
     st.divider()
     st.subheader("Laboratorio cuantitativo · V1.9")
