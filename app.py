@@ -468,13 +468,15 @@ def live_dashboard():
                     dev15=hist15.iloc[:cut15].copy()
                     test15=hist15.copy()
                     start_oos15=cut15
+                    thresholds=[5,6,7,8]
                     modes=["Base","EMA trend","Momentum","Volume","Structure"]
                     directions=["Both","LONG only","SHORT only"]
                     comparison=[]
-                    for mode in modes:
-                        for direction_mode in directions:
-                            met=backtest_diagnostic(dev15,7,mode,fee_bps,slippage_bps,risk_pct,int(max_hold),direction_mode=direction_mode)
-                            comparison.append({"Filtro":mode,"Dirección":direction_mode,**met})
+                    for threshold in thresholds:
+                        for mode in modes:
+                            for direction_mode in directions:
+                                met=backtest_diagnostic(dev15,threshold,mode,fee_bps,slippage_bps,risk_pct,int(max_hold),direction_mode=direction_mode)
+                                comparison.append({"Umbral":threshold,"Filtro":mode,"Dirección":direction_mode,**met})
                     comp15=pd.DataFrame(comparison)
                     ranked=comp15.replace([np.inf,-np.inf],np.nan)
                     eligible=ranked[ranked["Trades"]>=15]
@@ -483,10 +485,11 @@ def live_dashboard():
                     if eligible.empty:
                         eligible=ranked
                     ranked=eligible.sort_values(["Expectancy R","Profit factor"],ascending=False)
+                    chosen_threshold=int(ranked.iloc[0]["Umbral"])
                     chosen_filter=str(ranked.iloc[0]["Filtro"])
                     chosen_direction=str(ranked.iloc[0]["Dirección"])
-                    chosen15=f"{chosen_filter} · {chosen_direction}"
-                    oos15, trades15=backtest_diagnostic(test15,7,chosen_filter,fee_bps,slippage_bps,risk_pct,int(max_hold),start_index=start_oos15,return_trades=True,direction_mode=chosen_direction)
+                    chosen15=f"Score {chosen_threshold} · {chosen_filter} · {chosen_direction}"
+                    oos15, trades15=backtest_diagnostic(test15,chosen_threshold,chosen_filter,fee_bps,slippage_bps,risk_pct,int(max_hold),start_index=start_oos15,return_trades=True,direction_mode=chosen_direction)
                     # Also retain all OOS trades for a side-by-side long/short and exit-reason diagnosis.
                     st.session_state["diag_compare"]=comp15
                     st.session_state["diag_oos"]=pd.DataFrame([{"Filtro elegido en desarrollo":chosen15,**oos15}])
@@ -501,7 +504,7 @@ def live_dashboard():
         st.error("No se pudo completar el diagnóstico: "+st.session_state["diag_error"])
     if "diag_compare" in st.session_state:
         comp15=st.session_state["diag_compare"]
-        st.caption(f"Histórico: {st.session_state.get('diag_count',0):,} velas 1H · desarrollo: {st.session_state.get('diag_cut',0):,} · OOS: {st.session_state.get('diag_count',0)-st.session_state.get('diag_cut',0):,}. Umbral fijo = 7. Se comparan 15 combinaciones de filtro y dirección.")
+        st.caption(f"Histórico: {st.session_state.get('diag_count',0):,} velas 1H · desarrollo: {st.session_state.get('diag_cut',0):,} · OOS: {st.session_state.get('diag_count',0)-st.session_state.get('diag_cut',0):,}. Se comparan 60 combinaciones: 4 umbrales × 5 filtros × 3 direcciones. La selección se hace solo con desarrollo y se valida después en OOS.")
         st.success("Diagnóstico completado correctamente.")
         st.markdown("#### Comparación visual — expectativa por filtro y dirección")
         chart_comp=comp15.copy()
@@ -581,7 +584,7 @@ def live_dashboard():
 
             st.markdown("#### Registro detallado")
             st.dataframe(trades15,use_container_width=True)
-            st.download_button("Descargar operaciones OOS CSV",trades15.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_trades_v1_9.csv",mime="text/csv",key="download_trades_v19")
+            st.download_button("Descargar operaciones OOS CSV",trades15.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_trades_v1_9_2.csv",mime="text/csv",key="download_trades_v192")
         else:
             st.warning("No se generaron operaciones en el tramo OOS para este filtro.")
 
