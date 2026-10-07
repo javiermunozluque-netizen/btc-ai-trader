@@ -232,7 +232,7 @@ def backtest_diagnostic(df, threshold=7, filter_mode="Base", fee_bps=6, slippage
     empty = {"Trades":0,"Win rate %":0.0,"Profit factor":0.0,"Expectancy R":0.0,"Net R":0.0,"Max DD %":0.0,"Net return %":0.0}
     if df.empty or len(df)<300:
         return (empty, pd.DataFrame()) if return_trades else empty
-    x=add_indicators(df).reset_index(drop=True)
+    x=prepare_diagnostic(df)
     equity=1.0; peak=1.0; maxdd=0.0; wins=0; gp=0.0; gl=0.0; total_r=0.0; outcomes=[]; logs=[]
     cost_side=(float(fee_bps)+float(slippage_bps))/10000.0
     i=max(220,int(start_index))
