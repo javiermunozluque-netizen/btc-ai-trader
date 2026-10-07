@@ -157,6 +157,22 @@ def true_filter_diagnostic(df,fee_bps,slippage_bps,risk_pct,max_hold,start_index
                 rows.append({"Umbral":th,"Filtro":mode,"Dirección":dm,**met})
     return pd.DataFrame(rows),x,sig,out
 
+
+def technical_score(df4,df1):
+    a=df4.iloc[-1]; b=df1.iloc[-1]
+    s4=2 if a.close>a.ema55>a.ema200 and a.ema55>df4.ema55.iloc[-4] else (1 if a.close>a.ema55 else (-2 if a.close<a.ema55<a.ema200 else -1))
+    s1=1 if b.close>b.ema55 and b.ema55>df1.ema55.iloc[-4] else (-1 if b.close<b.ema55 and b.ema55<df1.ema55.iloc[-4] else 0)
+    mom=1 if 50<=b.rsi<=65 and b.rsi>df1.rsi.iloc[-3] else (-1 if b.rsi<45 else 0)
+    vol=1 if b.vol_rel>=1.2 and b.close>b.open else (-1 if b.vol_rel>=1.2 and b.close<b.open else 0)
+    st,hs,ls=structure_score(df1)
+    return s4,s1,mom,vol,st,hs,ls,s4+s1+mom+vol+st
+
+@st.cache_data(ttl=30)
+def current_data(symbol):
+    d1=add_indicators(klines(symbol,"1h",500))
+    d4=add_indicators(klines(symbol,"4h",500))
+    return d1,d4
+
 def render():
     st.title("₿ BTC AI Trader")
     st.caption("V1.9.5 · True Filter Diagnostic · Technical research only · No order execution")
