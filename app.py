@@ -1,4 +1,4 @@
-# BUILD SYNC: 2026-10-07 V1.9.5
+# BUILD SYNC: 2026-10-07 V1.9.6
 
 import streamlit as st
 import pandas as pd
@@ -7,7 +7,7 @@ import requests
 import plotly.graph_objects as go
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.9.5", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.9.6", page_icon="₿", layout="wide")
 
 st.markdown("""<style>
 :root{--btc-accent:#f7931a}
@@ -158,6 +158,30 @@ def true_filter_diagnostic(df,fee_bps,slippage_bps,risk_pct,max_hold,start_index
     return pd.DataFrame(rows),x,sig,out
 
 
+def horizon_analysis(df,start_index=220):
+    x,sig=build_signals(df,start_index); score=sig["score"]; n=len(x); close=x.close.to_numpy(float)
+    rows=[]
+    for th in [3,4,5,6,7]:
+        for dm in ["LONG","SHORT"]:
+            mask=(np.abs(score)>=th) & (np.arange(n)>=max(220,start_index)); mask &= (score>0 if dm=="LONG" else score<0)
+            idx=np.where(mask)[0]
+            for h in [1,2,4,8,12,24,48]:
+                v=idx[idx+h<n]; r=((close[v+h]/close[v])-1)*100; sr=r if dm=="LONG" else -r
+                rows.append({"Umbral":th,"Dirección":dm,"Horizonte (h)":h,"Señales":len(v),"Retorno medio %":float(np.mean(sr)) if len(v) else 0.,"Mediana %":float(np.median(sr)) if len(v) else 0.,"Win rate %":float(np.mean(sr>0)*100) if len(v) else 0.})
+    return pd.DataFrame(rows)
+
+def regime_analysis(df,start_index=220):
+    x,sig=build_signals(df,start_index); n=len(x); idx=np.arange(n); score=sig["score"]
+    atr_pct=(x.atr/x.close*100).to_numpy(float); up=((x.close>x.ema200)&(x.ema55>x.ema200)).to_numpy(); down=((x.close<x.ema200)&(x.ema55<x.ema200)).to_numpy()
+    vm=pd.Series(x.volume).rolling(48).median().to_numpy(); vh=x.volume.to_numpy(float)>vm
+    regimes=np.full(n,"Rango",dtype=object); regimes[up]="Tendencia alcista"; regimes[down]="Tendencia bajista"
+    base=max(220,start_index); hi=atr_pct>=np.nanpercentile(atr_pct[base:],70); lo=atr_pct<=np.nanpercentile(atr_pct[base:],30)
+    rows=[]
+    for reg,mask in [("Tendencia alcista",regimes=="Tendencia alcista"),("Tendencia bajista",regimes=="Tendencia bajista"),("Rango",regimes=="Rango"),("Alta volatilidad",hi),("Baja volatilidad",lo),("Volumen alto",vh),("Volumen normal/bajo",~vh)]:
+        m=mask&(idx>=base); sc=score[m]
+        rows.append({"Régimen":reg,"Velas":int(m.sum()),"Score medio":float(np.nanmean(sc)) if m.sum() else 0.,"Score +3 LONG":int((sc>=3).sum()),"Score -3 SHORT":int((sc<=-3).sum()),"Score +5 LONG":int((sc>=5).sum()),"Score -5 SHORT":int((sc<=-5).sum())})
+    return pd.DataFrame(rows)
+
 def technical_score(df4,df1):
     a=df4.iloc[-1]; b=df1.iloc[-1]
     s4=2 if a.close>a.ema55>a.ema200 and a.ema55>df4.ema55.iloc[-4] else (1 if a.close>a.ema55 else (-2 if a.close<a.ema55<a.ema200 else -1))
@@ -175,7 +199,7 @@ def current_data(symbol):
 
 def render():
     st.title("₿ BTC AI Trader")
-    st.caption("V1.9.5 · True Filter Diagnostic · Technical research only · No order execution")
+    st.caption("V1.9.6 · Signal Quality Research · Technical research only · No order execution")
     with st.sidebar:
         st.header("Parámetros")
         symbol=st.text_input("Símbolo","BTCUSDT")
@@ -195,9 +219,9 @@ def render():
 
     st.divider()
     st.markdown("### Backtest y validación")
-    if st.button("Ejecutar True Filter Diagnostic V1.9.5",type="primary"):
+    if st.button("Ejecutar Signal Quality Research V1.9.6",type="primary"):
         try:
-            with st.spinner("Construyendo señales independientes y evaluando 75 combinaciones…"):
+            with st.spinner("Construyendo señales y analizando horizontes, regímenes y 75 combinaciones…"):
                 end=int(datetime.now(timezone.utc).timestamp()*1000);start=int((datetime.now(timezone.utc)-timedelta(days=365*5)).timestamp()*1000)
                 hist=paginate_klines(symbol,"1h",start,end,12000)
                 if hist.empty or len(hist)<800:raise ValueError("No hay suficiente histórico.")
@@ -212,6 +236,10 @@ def render():
                 oos,trades=evaluate_config(out,sig,x,th,mode,dm,fee_bps,risk_pct,cut,True)
                 st.session_state["tf_comp"]=comp;st.session_state["tf_oos"]=pd.DataFrame([{"Configuración elegida en desarrollo":label,**oos}]);st.session_state["tf_trades"]=trades
                 st.session_state["tf_hist"]=len(hist);st.session_state["tf_cut"]=cut;st.session_state["tf_integrity"]=sig
+                st.session_state["tf_horizon_dev"]=horizon_analysis(dev,0)
+                st.session_state["tf_horizon_oos"]=horizon_analysis(test,cut)
+                st.session_state["tf_regime_dev"]=regime_analysis(dev,0)
+                st.session_state["tf_regime_oos"]=regime_analysis(test,cut)
                 st.session_state.pop("tf_error",None)
         except Exception as e:
             st.session_state["tf_error"]=f"{type(e).__name__}: {e}"
@@ -225,6 +253,17 @@ def render():
         st.markdown("#### Comparación de filtros — desarrollo")
         view=comp.copy();view["Configuración"]=view.Filtro+" · "+view.Dirección
         st.dataframe(view.round({"Win rate %":1,"Profit factor":2,"Expectancy R":3,"Net R":2,"Max DD %":1,"Net return %":1}),use_container_width=True,hide_index=True)
+        st.markdown("#### 🔬 Signal Quality — ¿la señal anticipa movimiento?")
+        st.caption("Retorno futuro desde la vela de señal, con signo ajustado a la dirección. Evalúa poder predictivo, no rentabilidad de una estrategia.")
+        hv=st.session_state["tf_horizon_oos"]
+        piv=hv.pivot_table(index=["Umbral","Dirección"],columns="Horizonte (h)",values="Retorno medio %",aggfunc="first").reset_index()
+        st.dataframe(piv.round(3),use_container_width=True,hide_index=True)
+        besth=hv.sort_values("Retorno medio %",ascending=False).iloc[0]
+        st.success(f"Mejor retorno medio OOS: Score {int(besth.Umbral)} {besth.Dirección} a {int(besth["Horizonte (h)"])}h → {besth["Retorno medio %"]:.3f}% por señal.")
+        st.markdown("#### 🌐 Regímenes de mercado — OOS")
+        st.dataframe(st.session_state["tf_regime_oos"],use_container_width=True,hide_index=True)
+        st.info("V1.9.6 no cambia TP/SL ni intenta optimizar la estrategia: primero determina si las señales tienen capacidad predictiva, horizonte y régimen.")
+        
         st.markdown("#### ¿Los filtros realmente filtran?")
         integ=comp.groupby(["Umbral","Dirección"]).agg(Configuraciones=("Filtro","nunique"),Min_trades=("Trades","min"),Max_trades=("Trades","max"),Min_expectativa=("Expectancy R","min"),Max_expectativa=("Expectancy R","max")).reset_index()
         st.dataframe(integ.round({"Min_expectativa":3,"Max_expectativa":3}),use_container_width=True,hide_index=True)
@@ -237,8 +276,8 @@ def render():
             fig.add_hline(y=0,line_dash="dash");fig.update_layout(height=320,margin=dict(l=8,r=8,t=15,b=8),xaxis_title="Salida UTC",yaxis_title="R acumulado",showlegend=False)
             st.plotly_chart(fig,use_container_width=True,config={"displaylogo":False})
             st.dataframe(tr,use_container_width=True,hide_index=True)
-        st.download_button("Descargar diagnóstico completo V1.9.5",comp.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_true_filter_diagnostic_v1_9_5.csv",mime="text/csv")
+        st.download_button("Descargar diagnóstico completo V1.9.6",comp.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_signal_quality_v1_9_6.csv",mime="text/csv")
     st.divider()
-    st.caption("V1.9.5 no pretende encontrar un resultado positivo a la fuerza: primero comprueba si los filtros aportan información incremental y después valida la configuración elegida en OOS.")
+    st.caption("V1.9.6 no pretende encontrar un resultado positivo a la fuerza: primero comprueba si existe poder predictivo, horizonte y régimen, y después valida la configuración elegida en OOS.")
 
 render()
