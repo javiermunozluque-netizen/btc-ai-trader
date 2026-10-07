@@ -1,4 +1,4 @@
-# BUILD SYNC: 2026-10-07 V1.9.8
+# BUILD SYNC: 2026-10-07 V1.9.9
 
 import streamlit as st
 import pandas as pd
@@ -7,7 +7,7 @@ import requests
 import plotly.graph_objects as go
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.9.8", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.9.9", page_icon="₿", layout="wide")
 
 st.markdown("""<style>
 :root{--btc-accent:#f7931a}
@@ -325,6 +325,47 @@ def edge_validation(df,start_index=220,boot_n=5000,seed=198):
     return pd.DataFrame(rows),pd.DataFrame(block_rows)
 
 
+def robustness_analysis(df,start_index=220):
+    """
+    Pre-specified robustness checks for Score 6/7 SHORT at 24/48h:
+    remove the top 1%, 5% and 10% observations and report the remaining mean.
+    Also reports positive OOS blocks and worst block.
+    """
+    x,sig=build_signals(df,start_index)
+    n=len(x); base=max(220,int(start_index)); score=sig["score"]
+    op=x.open.to_numpy(float); close=x.close.to_numpy(float)
+    rows=[]; block_rows=[]
+    for th in [6,7]:
+        for h in [24,48]:
+            idx=np.where((score<=-th)&(np.arange(n)>=base)&(np.arange(n)<n-49))[0]
+            ei=idx+1; xi=ei+h-1; ok=(ei<n)&(xi<n); ei=ei[ok]; xi=xi[ok]
+            r=((close[xi]/op[ei])-1)*-100
+            if len(r)==0: continue
+            s=np.sort(r)
+            rows.append({
+                "Umbral":th,"Dirección":"SHORT","Horizonte (h)":h,"Señales":len(r),
+                "Media original %":float(np.mean(r)),
+                "Sin top 1% %":float(np.mean(s[:max(1,int(np.floor(len(s)*.99)))])),
+                "Sin top 5% %":float(np.mean(s[:max(1,int(np.floor(len(s)*.95)))])),
+                "Sin top 10% %":float(np.mean(s[:max(1,int(np.floor(len(s)*.90)))])),
+                "Mediana %":float(np.median(r)),
+                "Peor %":float(np.min(r)),
+                "Mejor %":float(np.max(r))
+            })
+            edges=np.linspace(0,len(r),5,dtype=int)
+            for b in range(4):
+                rb=r[edges[b]:edges[b+1]]
+                block_rows.append({
+                    "Umbral":th,"Dirección":"SHORT","Horizonte (h)":h,
+                    "Bloque OOS":b+1,"Señales":len(rb),
+                    "Media %":float(np.mean(rb)) if len(rb) else 0.,
+                    "Mediana %":float(np.median(rb)) if len(rb) else 0.,
+                    "Win rate %":float(np.mean(rb>0)*100) if len(rb) else 0.,
+                    "Positivo":bool(np.mean(rb)>0) if len(rb) else False
+                })
+    return pd.DataFrame(rows),pd.DataFrame(block_rows)
+
+
 def technical_score(df4,df1):
     a=df4.iloc[-1]; b=df1.iloc[-1]
     s4=2 if a.close>a.ema55>a.ema200 and a.ema55>df4.ema55.iloc[-4] else (1 if a.close>a.ema55 else (-2 if a.close<a.ema55<a.ema200 else -1))
@@ -342,7 +383,7 @@ def current_data(symbol):
 
 def render():
     st.title("₿ BTC AI Trader")
-    st.caption("V1.9.8 · Signal Quality Research · Technical research only · No order execution")
+    st.caption("V1.9.9 · Signal Quality Research · Technical research only · No order execution")
     with st.sidebar:
         st.header("Parámetros")
         symbol=st.text_input("Símbolo","BTCUSDT")
@@ -362,7 +403,7 @@ def render():
 
     st.divider()
     st.markdown("### Backtest y validación")
-    if st.button("Ejecutar Predictive Edge Validation V1.9.8",type="primary"):
+    if st.button("Ejecutar Predictive Edge Validation V1.9.9",type="primary"):
         try:
             with st.spinner("Validando entrada next-open, horizontes, distribución, regímenes y 75 combinaciones…"):
                 end=int(datetime.now(timezone.utc).timestamp()*1000);start=int((datetime.now(timezone.utc)-timedelta(days=365*5)).timestamp()*1000)
@@ -388,6 +429,7 @@ def render():
                 st.session_state["tf_regime_horizon_dev"]=regime_horizon_analysis(dev,0)
                 st.session_state["tf_regime_horizon_oos"]=regime_horizon_analysis(test,cut)
                 st.session_state["tf_edge_oos"],st.session_state["tf_edge_blocks_oos"]=edge_validation(test,cut,5000,198)
+                st.session_state["tf_robust_oos"],st.session_state["tf_robust_blocks_oos"]=robustness_analysis(test,cut)
                 st.session_state.pop("tf_error",None)
         except Exception as e:
             st.session_state["tf_error"]=f"{type(e).__name__}: {e}"
@@ -402,7 +444,7 @@ def render():
         view=comp.copy();view["Configuración"]=view.Filtro+" · "+view.Dirección
         st.dataframe(view.round({"Win rate %":1,"Profit factor":2,"Expectancy R":3,"Net R":2,"Max DD %":1,"Net return %":1}),use_container_width=True,hide_index=True)
         st.markdown("#### 🔬 Predictive Edge — validación con entrada realista")
-        st.caption("V1.9.8 alinea el diagnóstico con la ejecución: señal al cierre de la vela i → entrada en apertura de i+1. El horizonte h mide el cierre de la h.ª vela desde esa entrada.")
+        st.caption("V1.9.9 alinea el diagnóstico con la ejecución: señal al cierre de la vela i → entrada en apertura de i+1. El horizonte h mide el cierre de la h.ª vela desde esa entrada.")
         hv=st.session_state["tf_horizon_exec_oos"]
         piv=hv.pivot_table(index=["Umbral","Dirección"],columns="Horizonte (h)",values="Retorno medio %",aggfunc="first").reset_index()
         st.dataframe(piv.round(3),use_container_width=True,hide_index=True)
@@ -429,9 +471,9 @@ def render():
         rh=st.session_state["tf_regime_horizon_oos"]
         rhv=rh[(rh["Umbral"].isin([6,7]))&(rh["Horizonte (h)"].isin([24,48]))].copy()
         st.dataframe(rhv.round(3),use_container_width=True,hide_index=True)
-        st.info("V1.9.8 no cambia TP/SL ni fuerza una estrategia positiva: primero valida si el efecto predictivo sobrevive al next-open, a la distribución, al horizonte y al régimen.")
+        st.info("V1.9.9 no cambia TP/SL ni fuerza una estrategia positiva: primero valida si el efecto predictivo sobrevive al next-open, a la distribución, al horizonte y al régimen.")
         
-        st.markdown("#### 🧪 V1.9.8 — Validación estadística del edge")
+        st.markdown("#### 🧪 V1.9.9 — Validación estadística del edge")
         st.caption("Hipótesis predefinidas: Score 6/7, LONG/SHORT, horizontes 24/48h. El benchmark aleatorio mantiene la dirección y el número de señales, pero elimina el criterio de score.")
         edge=st.session_state["tf_edge_oos"].copy()
         st.dataframe(edge.round(3),use_container_width=True,hide_index=True)
@@ -439,9 +481,28 @@ def render():
         st.markdown("##### 📈 Estabilidad temporal OOS")
         eb=st.session_state["tf_edge_blocks_oos"].copy()
         st.dataframe(eb.round(3),use_container_width=True,hide_index=True)
-        bestedge=edge.sort_values(["Ventaja vs benchmark %","Señales"],ascending=[False,False]).iloc[0]
-        st.success(f"Mejor ventaja frente al benchmark: Score {int(bestedge['Umbral'])} {bestedge['Dirección']} a {int(bestedge['Horizonte (h)'])}h → {bestedge['Ventaja vs benchmark %']:.3f} puntos porcentuales.")
-        st.info("V1.9.8 congela las cuatro hipótesis antes de mirar el resultado: no selecciona un nuevo TP/SL ni recalibra la señal. Si una ventaja es real, debería superar el benchmark y mostrar estabilidad en varios bloques OOS.")
+        focus=edge[(edge["Dirección"]=="SHORT")&(edge["Horizonte (h)"].isin([24,48]))&(edge["Umbral"].isin([6,7]))].copy()
+        for _,fe in focus.iterrows():
+            st.metric(f"Score {int(fe['Umbral'])} SHORT · {int(fe['Horizonte (h)'])}h",f"{fe['Media %']:.3f}%","vs benchmark %+ .3f pp"%fe["Ventaja vs benchmark %"])
+        bestedge=focus.sort_values(["Ventaja vs benchmark %","Señales"],ascending=[False,False]).iloc[0]
+        st.success(f"Mayor ventaja OOS: Score {int(bestedge['Umbral'])} SHORT a {int(bestedge['Horizonte (h)'])}h → {bestedge['Ventaja vs benchmark %']:.3f} puntos porcentuales.")
+        st.info("V1.9.9 congela las cuatro hipótesis antes de mirar el resultado: no selecciona un nuevo TP/SL ni recalibra la señal. Si una ventaja es real, debería superar el benchmark y mostrar estabilidad en varios bloques OOS.")
+        
+
+        st.markdown("#### 🛡️ Robustez frente a outliers — OOS")
+        st.caption("Quitamos las mejores señales del resultado, sin recalibrar nada. Si la media sigue siendo positiva, el efecto depende menos de unas pocas operaciones extremas.")
+        rob=st.session_state["tf_robust_oos"].copy()
+        st.dataframe(rob.round(3),use_container_width=True,hide_index=True)
+        st.markdown("##### 📈 Estabilidad por bloques — SHORT")
+        rb=st.session_state["tf_robust_blocks_oos"].copy()
+        st.dataframe(rb.round(3),use_container_width=True,hide_index=True)
+        st.caption("Los 4 bloques son cronológicos dentro de cada hipótesis. Positivo = media del bloque > 0.")
+        for _,rr in rob.iterrows():
+            blocks=rb[(rb["Umbral"]==rr["Umbral"])&(rb["Horizonte (h)"]==rr["Horizonte (h)"])]
+            pos=int(blocks["Positivo"].sum()) if not blocks.empty else 0
+            worst=float(blocks["Media %"].min()) if not blocks.empty else 0.
+            st.metric(f"Score {int(rr['Umbral'])} SHORT · {int(rr['Horizonte (h)'])}h",f"{rr['Media original %']:.3f}% → {rr['Sin top 10% %']:.3f}%","%d/4 bloques positivos · peor %.3f%%"%(pos,worst))
+        st.info("La eliminación de outliers es una prueba de sensibilidad, no una nueva optimización. Un edge sano no debería desaparecer por completo al retirar una pequeña fracción de los mejores resultados.")
         
         st.markdown("#### ¿Los filtros realmente filtran?")
         integ=comp.groupby(["Umbral","Dirección"]).agg(Configuraciones=("Filtro","nunique"),Min_trades=("Trades","min"),Max_trades=("Trades","max"),Min_expectativa=("Expectancy R","min"),Max_expectativa=("Expectancy R","max")).reset_index()
@@ -466,9 +527,11 @@ def render():
         export_rho=st.session_state["tf_regime_horizon_oos"].copy(); export_rho["Tipo registro"]="Régimen + horizonte"; export_rho["Segmento"]="OOS"
         export_edge=st.session_state["tf_edge_oos"].copy(); export_edge["Tipo registro"]="Validación estadística edge"; export_edge["Segmento"]="OOS"
         export_blocks=st.session_state["tf_edge_blocks_oos"].copy(); export_blocks["Tipo registro"]="Estabilidad temporal"; export_blocks["Segmento"]="OOS"
-        export_all=pd.concat([export_cfg,export_oos,export_tr,export_hc,export_he,export_rd,export_ro,export_rhd,export_rho,export_edge,export_blocks],ignore_index=True,sort=False)
-        st.download_button("Descargar diagnóstico completo V1.9.8",export_all.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_predictive_edge_v1_9_8.csv",mime="text/csv")
+        export_rob=st.session_state["tf_robust_oos"].copy(); export_rob["Tipo registro"]="Robustez outliers"; export_rob["Segmento"]="OOS"
+        export_rob_blocks=st.session_state["tf_robust_blocks_oos"].copy(); export_rob_blocks["Tipo registro"]="Estabilidad bloques robustez"; export_rob_blocks["Segmento"]="OOS"
+        export_all=pd.concat([export_cfg,export_oos,export_tr,export_hc,export_he,export_rd,export_ro,export_rhd,export_rho,export_edge,export_blocks,export_rob,export_rob_blocks],ignore_index=True,sort=False)
+        st.download_button("Descargar diagnóstico completo V1.9.9",export_all.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_predictive_edge_v1_9_9.csv",mime="text/csv")
     st.divider()
-    st.caption("V1.9.8 no pretende encontrar un resultado positivo a la fuerza: comprueba si el efecto sobrevive a la ejecución next-open, a la distribución, al horizonte y al régimen antes de tocar TP/SL.")
+    st.caption("V1.9.9 no pretende encontrar un resultado positivo a la fuerza: comprueba si el efecto sobrevive a la ejecución next-open, a la distribución, al horizonte y al régimen antes de tocar TP/SL.")
 
 render()
