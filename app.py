@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.8", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.9", page_icon="₿", layout="wide")
 
 st.markdown("""<style>
 :root{--btc-accent:#f7931a}
@@ -276,11 +276,19 @@ def backtest_diagnostic(df, threshold=7, filter_mode="Base", fee_bps=6, slippage
         equity*=max(0.0,1.0+(float(risk_pct)/100.0)*net_r)
         peak=max(peak,equity)
         if peak>0: maxdd=max(maxdd,(peak-equity)/peak)
+        fee_cost_side=float(fee_bps)/10000.0*entry
+        slip_cost_side=float(slippage_bps)/10000.0*entry
+        fee_total=2*fee_cost_side
+        slip_total=2*slip_cost_side
+        total_cost_usdt=fee_total+slip_total
+        ambiguous_bar=(direction==1 and x.low.iloc[exit_idx]<=stop and x.high.iloc[exit_idx]>=target) or (direction==-1 and x.high.iloc[exit_idx]>=stop and x.low.iloc[exit_idx]<=target)
         logs.append({"Entrada UTC":x.open_time.iloc[entry_idx],"Salida UTC":x.open_time.iloc[exit_idx],
                      "Dirección":"LONG" if direction==1 else "SHORT","Filtro":filter_mode,"Score":score,
                      "Entrada":entry,"Salida":exit_price,"Stop inicial":stop,"Objetivo inicial":target,
-                     "Motivo salida":reason,"R bruto":gross_r,"Costes (R)":costs_r,"R neto":net_r,
-                     "Duración (h)":exit_idx-entry_idx})
+                     "Motivo salida":reason,"R bruto":gross_r,"Comisión (USDT)":fee_total,
+                     "Deslizamiento (USDT)":slip_total,"Costes (USDT)":total_cost_usdt,
+                     "Costes (R)":costs_r,"R neto":net_r,"Duración (h)":exit_idx-entry_idx,
+                     "Misma vela":exit_idx==entry_idx,"Vela ambigua":bool(ambiguous_bar)})
         i=exit_idx+1
     summary={"Trades":len(outcomes),"Win rate %":wins/len(outcomes)*100 if outcomes else 0.0,
              "Profit factor":gp/gl if gl>0 else (float("inf") if gp>0 else 0.0),
@@ -291,8 +299,8 @@ def backtest_diagnostic(df, threshold=7, filter_mode="Base", fee_bps=6, slippage
 st.markdown("""
 <div style="padding:22px 24px;margin:2px 0 16px;border:1px solid rgba(127,140,160,.22);border-radius:18px;background:linear-gradient(115deg,rgba(247,147,26,.12),rgba(127,140,160,.035) 52%,rgba(85,119,255,.08));">
   <div style="font-size:.76rem;font-weight:750;letter-spacing:.14em;text-transform:uppercase;opacity:.72;margin-bottom:7px">QUANT RESEARCH · BTC / USDT</div>
-  <div style="font-size:clamp(1.8rem,4vw,2.7rem);font-weight:850;letter-spacing:-.055em;line-height:1.08">₿ BTC AI Trader <span style="color:#f7931a">/ V1.8</span></div>
-  <div style="margin-top:9px;font-size:.96rem;opacity:.82">Market intelligence · Directional testing · Robust diagnostics</div>
+  <div style="font-size:clamp(1.8rem,4vw,2.7rem);font-weight:850;letter-spacing:-.055em;line-height:1.08">₿ BTC AI Trader <span style="color:#f7931a">/ V1.9</span></div>
+  <div style="margin-top:9px;font-size:.96rem;opacity:.82">Market intelligence · Backtest audit · Robust diagnostics</div>
   <div style="display:inline-block;margin-top:15px;padding:5px 10px;border:1px solid rgba(127,140,160,.28);border-radius:99px;font-size:.75rem;font-weight:650">● DATOS PÚBLICOS · SOLO ANÁLISIS · SIN EJECUCIÓN DE ÓRDENES</div>
 </div>
 """,unsafe_allow_html=True)
@@ -358,15 +366,15 @@ def live_dashboard():
     fig.update_xaxes(showgrid=False,row=1,col=1)
     fig.update_xaxes(showgrid=False,row=2,col=1)
     st.plotly_chart(fig,use_container_width=True,config={"displaylogo":False,"scrollZoom":True})
-    st.subheader("Validación cuantitativa · V1.8")
-    st.caption("Los análisis se ejecutan solo al pulsar el botón. La prueba fuera de muestra no se utiliza para elegir parámetros.")
+    st.subheader("Validación cuantitativa · V1.9")
+    st.caption("Los análisis se ejecutan solo al pulsar el botón. V1.9 añade una auditoría de ejecución: causalidad, velas ambiguas, salidas en la misma vela y sensibilidad a costes.")
     st.write("Validación cronológica: comparación de umbrales en desarrollo y evaluación en el 30% final fuera de muestra (OOS). Modelo 1H simplificado; no replica exactamente la señal multi-timeframe en vivo.")
     b1,b2,b3,b4=st.columns(4)
     fee_bps=b1.number_input("Comisión por lado (pb)",min_value=0.0,max_value=100.0,value=6.0,step=1.0,key="bt_fee_bps")
     slippage_bps=b2.number_input("Deslizamiento por lado (pb)",min_value=0.0,max_value=100.0,value=2.0,step=1.0,key="bt_slippage_bps")
     risk_pct=b3.number_input("Riesgo por operación (%)",min_value=0.1,max_value=5.0,value=0.5,step=0.1,key="bt_risk_pct")
     max_hold=b4.number_input("Máx. duración (velas 1H)",min_value=1,max_value=240,value=48,step=1,key="bt_max_hold")
-    if st.button("Ejecutar validación V1.8",key="run_backtest_v14"):
+    if st.button("Ejecutar validación V1.9",key="run_backtest_v19"):
         try:
             with st.spinner("Descargando hasta 12.000 velas recientes y calculando métricas. Puede tardar un poco…"):
                 end=int(datetime.now(timezone.utc).timestamp()*1000)
@@ -423,12 +431,12 @@ def live_dashboard():
             export_oos=st.session_state["bt_oos"].rename(columns={"Umbral seleccionado (solo desarrollo)":"Umbral"})
             export_oos["Segmento"]="Fuera de muestra"
             export=pd.concat([export,export_oos],ignore_index=True,sort=False)
-        st.download_button("Descargar informe CSV",export.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_8.csv",mime="text/csv",key="download_backtest_v16")
+        st.download_button("Descargar informe CSV",export.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_9.csv",mime="text/csv",key="download_backtest_v19")
 
     st.divider()
-    st.subheader("Laboratorio cuantitativo · V1.8")
+    st.subheader("Laboratorio cuantitativo · V1.9")
     st.write("Compara filtros técnicos y dirección de operación con un umbral fijo de 7. La selección se hace solo en desarrollo y se evalúa en el 30% final OOS. Para evitar elegir configuraciones con muy pocas operaciones, se priorizan candidatos con al menos 15 operaciones de desarrollo; aun así, el resultado es exploratorio.")
-    if st.button("Ejecutar diagnóstico V1.8",key="run_diagnostic_v16"):
+    if st.button("Ejecutar diagnóstico V1.9",key="run_diagnostic_v19"):
         try:
             with st.spinner("Comparando filtros y modos LONG/SHORT sobre el histórico reciente…"):
                 end2=int(datetime.now(timezone.utc).timestamp()*1000)
@@ -520,9 +528,42 @@ def live_dashboard():
             t2.markdown("**Por salida**")
             st2=trades15.groupby("Motivo salida").agg(Operaciones=("R neto","count"),Expectativa_R=("R neto","mean"),R_neto=("R neto","sum")).reset_index()
             t2.dataframe(st2.style.format({"Expectativa_R":"{:.3f}","R_neto":"{:.2f}"}),use_container_width=True)
+            st.markdown("#### Auditoría de ejecución V1.9")
+            audit=trades15.copy()
+            zero_h=int((audit["Duración (h)"]==0).sum())
+            ambiguous=int(audit["Vela ambigua"].sum()) if "Vela ambigua" in audit.columns else 0
+            same_bar=int(audit["Misma vela"].sum()) if "Misma vela" in audit.columns else 0
+            avg_cost=float(audit["Costes (R)"].mean()) if not audit.empty else 0.0
+            total_cost=float(audit["Costes (USDT)"].sum()) if "Costes (USDT)" in audit.columns else 0.0
+            a1,a2,a3,a4,a5=st.columns(5)
+            a1.metric("Salidas 0h",f"{zero_h} ({zero_h/len(audit)*100:.1f}%)")
+            a2.metric("Salidas misma vela",f"{same_bar}")
+            a3.metric("Velas ambiguas",f"{ambiguous}")
+            a4.metric("Coste medio",f"{avg_cost:.3f} R")
+            a5.metric("Coste total",f"{total_cost:,.0f} USDT")
+            st.caption("Una salida de 0h no es necesariamente un error: la operación entra en la apertura de una vela y el stop/objetivo puede alcanzarse dentro de esa misma vela. Si una vela toca simultáneamente stop y objetivo, V1.9 aplica stop-first de forma conservadora.")
+
+            st.markdown("#### Sensibilidad a costes")
+            st.caption("Mantiene exactamente las mismas entradas y salidas OOS y modifica únicamente la fricción.")
+            sens=[]
+            for total_bps in [0,4,8,12,16,20]:
+                gross=float(audit["R bruto"].sum())
+                denom=(audit["Stop inicial"]-audit["Entrada"]).abs()
+                sens_cost=float((total_bps/10000.0*audit["Entrada"]/denom).sum())
+                sens.append({"Coste total ida+vuelta (pb)":total_bps,"Costes (R)":sens_cost,"R neto":gross-sens_cost,"Expectativa R":(gross-sens_cost)/len(audit)})
+            sens_df=pd.DataFrame(sens)
+            sens_fig=go.Figure()
+            sens_fig.add_trace(go.Scatter(x=sens_df["Coste total ida+vuelta (pb)"],y=sens_df["R neto"],mode="lines+markers",name="R neto",line=dict(width=2.5)))
+            sens_fig.add_hline(y=0,line_dash="dash",line_color="gray")
+            sens_fig.update_layout(height=300,template="plotly_dark" if st.get_option("theme.base")=="dark" else "plotly_white",margin=dict(l=8,r=8,t=15,b=8),xaxis_title="Coste total ida + vuelta (pb)",yaxis_title="R neto",showlegend=False)
+            sens_fig.update_xaxes(gridcolor="rgba(127,140,160,.18)")
+            sens_fig.update_yaxes(gridcolor="rgba(127,140,160,.18)")
+            st.plotly_chart(sens_fig,use_container_width=True,config={"displaylogo":False})
+            st.dataframe(sens_df.style.format({"Costes (R)":"{:.2f}","R neto":"{:.2f}","Expectativa R":"{:.3f}"}),use_container_width=True)
+
             st.markdown("#### Registro detallado")
             st.dataframe(trades15,use_container_width=True)
-            st.download_button("Descargar operaciones OOS CSV",trades15.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_trades_v1_8.csv",mime="text/csv",key="download_trades_v16")
+            st.download_button("Descargar operaciones OOS CSV",trades15.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_trades_v1_9.csv",mime="text/csv",key="download_trades_v19")
         else:
             st.warning("No se generaron operaciones en el tramo OOS para este filtro.")
 
