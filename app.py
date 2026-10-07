@@ -1,4 +1,4 @@
-# BUILD SYNC: 2026-10-07 V1.9.6
+# BUILD SYNC: 2026-10-07 V1.9.7
 
 import streamlit as st
 import pandas as pd
@@ -7,7 +7,7 @@ import requests
 import plotly.graph_objects as go
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.9.6", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.9.7", page_icon="₿", layout="wide")
 
 st.markdown("""<style>
 :root{--btc-accent:#f7931a}
@@ -158,7 +158,7 @@ def true_filter_diagnostic(df,fee_bps,slippage_bps,risk_pct,max_hold,start_index
     return pd.DataFrame(rows),x,sig,out
 
 
-def horizon_analysis(df,start_index=220):
+def signal_close_horizon_analysis(df,start_index=220):
     x,sig=build_signals(df,start_index); score=sig["score"]; n=len(x); close=x.close.to_numpy(float)
     rows=[]
     for th in [3,4,5,6,7]:
@@ -182,6 +182,90 @@ def regime_analysis(df,start_index=220):
         rows.append({"Régimen":reg,"Velas":int(m.sum()),"Score medio":float(np.nanmean(sc)) if m.sum() else 0.,"Score +3 LONG":int((sc>=3).sum()),"Score -3 SHORT":int((sc<=-3).sum()),"Score +5 LONG":int((sc>=5).sum()),"Score -5 SHORT":int((sc<=-5).sum())})
     return pd.DataFrame(rows)
 
+def execution_horizon_analysis(df,start_index=220):
+    """
+    Execution-aligned predictive diagnostic.
+    Signal is generated on candle i close; entry is candle i+1 open.
+    Horizon h means close of the h-th candle after entry.
+    """
+    x,sig=build_signals(df,start_index)
+    score=sig["score"]; n=len(x); op=x.open.to_numpy(float); close=x.close.to_numpy(float)
+    rows=[]
+    base=max(220,int(start_index))
+    for th in [3,4,5,6,7]:
+        for dm in ["LONG","SHORT"]:
+            mask=(np.abs(score)>=th)&(np.arange(n)>=base)
+            mask &= (score>0 if dm=="LONG" else score<0)
+            idx=np.where(mask)[0]
+            for h in [1,2,4,8,12,24,48]:
+                entry_idx=idx+1
+                exit_idx=entry_idx+h-1
+                ok=(entry_idx<n)&(exit_idx<n)
+                ei=entry_idx[ok]; xi=exit_idx[ok]
+                r=((close[xi]/op[ei])-1)*100
+                sr=r if dm=="LONG" else -r
+                rows.append({
+                    "Umbral":th,"Dirección":dm,"Horizonte (h)":h,"Señales":int(len(sr)),
+                    "Retorno medio %":float(np.mean(sr)) if len(sr) else 0.,
+                    "Mediana %":float(np.median(sr)) if len(sr) else 0.,
+                    "Win rate %":float(np.mean(sr>0)*100) if len(sr) else 0.,
+                    "P25 %":float(np.percentile(sr,25)) if len(sr) else 0.,
+                    "P75 %":float(np.percentile(sr,75)) if len(sr) else 0.,
+                    "Desv. estándar %":float(np.std(sr,ddof=1)) if len(sr)>1 else 0.,
+                    "Mejor %":float(np.max(sr)) if len(sr) else 0.,
+                    "Peor %":float(np.min(sr)) if len(sr) else 0.
+                })
+    return pd.DataFrame(rows)
+
+def regime_horizon_analysis(df,start_index=220):
+    """
+    Execution-aligned returns by regime, threshold, direction and 24/48h horizon.
+    Regime is measured on the signal candle; returns start at next open.
+    """
+    x,sig=build_signals(df,start_index)
+    n=len(x); idx=np.arange(n); score=sig["score"]; op=x.open.to_numpy(float); close=x.close.to_numpy(float)
+    atr_pct=(x.atr/x.close*100).to_numpy(float)
+    up=((x.close>x.ema200)&(x.ema55>x.ema200)).to_numpy()
+    down=((x.close<x.ema200)&(x.ema55<x.ema200)).to_numpy()
+    vm=pd.Series(x.volume).rolling(48).median().to_numpy()
+    vh=x.volume.to_numpy(float)>vm
+    regimes=np.full(n,"Rango",dtype=object)
+    regimes[up]="Tendencia alcista"; regimes[down]="Tendencia bajista"
+    base=max(220,int(start_index))
+    hi=atr_pct>=np.nanpercentile(atr_pct[base:],70)
+    lo=atr_pct<=np.nanpercentile(atr_pct[base:],30)
+    regime_masks=[
+        ("Tendencia alcista",regimes=="Tendencia alcista"),
+        ("Tendencia bajista",regimes=="Tendencia bajista"),
+        ("Rango",regimes=="Rango"),
+        ("Alta volatilidad",hi),
+        ("Baja volatilidad",lo),
+        ("Volumen alto",vh),
+        ("Volumen normal/bajo",~vh)
+    ]
+    rows=[]
+    for reg,rmask in regime_masks:
+        for th in [6,7]:
+            for dm in ["LONG","SHORT"]:
+                sigmask=rmask&(idx>=base)&(np.abs(score)>=th)
+                sigmask &= (score>0 if dm=="LONG" else score<0)
+                inds=np.where(sigmask)[0]
+                for h in [24,48]:
+                    ei=inds+1; xi=ei+h-1
+                    ok=(ei<n)&(xi<n); ei=ei[ok]; xi=xi[ok]
+                    r=((close[xi]/op[ei])-1)*100
+                    sr=r if dm=="LONG" else -r
+                    rows.append({
+                        "Régimen":reg,"Umbral":th,"Dirección":dm,"Horizonte (h)":h,
+                        "Señales":int(len(sr)),
+                        "Retorno medio %":float(np.mean(sr)) if len(sr) else 0.,
+                        "Mediana %":float(np.median(sr)) if len(sr) else 0.,
+                        "Win rate %":float(np.mean(sr>0)*100) if len(sr) else 0.,
+                        "P25 %":float(np.percentile(sr,25)) if len(sr) else 0.,
+                        "P75 %":float(np.percentile(sr,75)) if len(sr) else 0.
+                    })
+    return pd.DataFrame(rows)
+
 def technical_score(df4,df1):
     a=df4.iloc[-1]; b=df1.iloc[-1]
     s4=2 if a.close>a.ema55>a.ema200 and a.ema55>df4.ema55.iloc[-4] else (1 if a.close>a.ema55 else (-2 if a.close<a.ema55<a.ema200 else -1))
@@ -199,7 +283,7 @@ def current_data(symbol):
 
 def render():
     st.title("₿ BTC AI Trader")
-    st.caption("V1.9.6 · Signal Quality Research · Technical research only · No order execution")
+    st.caption("V1.9.7 · Signal Quality Research · Technical research only · No order execution")
     with st.sidebar:
         st.header("Parámetros")
         symbol=st.text_input("Símbolo","BTCUSDT")
@@ -219,9 +303,9 @@ def render():
 
     st.divider()
     st.markdown("### Backtest y validación")
-    if st.button("Ejecutar Signal Quality Research V1.9.6",type="primary"):
+    if st.button("Ejecutar Predictive Edge Validation V1.9.7",type="primary"):
         try:
-            with st.spinner("Construyendo señales y analizando horizontes, regímenes y 75 combinaciones…"):
+            with st.spinner("Validando entrada next-open, horizontes, distribución, regímenes y 75 combinaciones…"):
                 end=int(datetime.now(timezone.utc).timestamp()*1000);start=int((datetime.now(timezone.utc)-timedelta(days=365*5)).timestamp()*1000)
                 hist=paginate_klines(symbol,"1h",start,end,12000)
                 if hist.empty or len(hist)<800:raise ValueError("No hay suficiente histórico.")
@@ -236,33 +320,56 @@ def render():
                 oos,trades=evaluate_config(out,sig,x,th,mode,dm,fee_bps,risk_pct,cut,True)
                 st.session_state["tf_comp"]=comp;st.session_state["tf_oos"]=pd.DataFrame([{"Configuración elegida en desarrollo":label,**oos}]);st.session_state["tf_trades"]=trades
                 st.session_state["tf_hist"]=len(hist);st.session_state["tf_cut"]=cut;st.session_state["tf_integrity"]=sig
-                st.session_state["tf_horizon_dev"]=horizon_analysis(dev,0)
-                st.session_state["tf_horizon_oos"]=horizon_analysis(test,cut)
+                st.session_state["tf_horizon_close_dev"]=signal_close_horizon_analysis(dev,0)
+                st.session_state["tf_horizon_close_oos"]=signal_close_horizon_analysis(test,cut)
+                st.session_state["tf_horizon_exec_dev"]=execution_horizon_analysis(dev,0)
+                st.session_state["tf_horizon_exec_oos"]=execution_horizon_analysis(test,cut)
                 st.session_state["tf_regime_dev"]=regime_analysis(dev,0)
                 st.session_state["tf_regime_oos"]=regime_analysis(test,cut)
+                st.session_state["tf_regime_horizon_dev"]=regime_horizon_analysis(dev,0)
+                st.session_state["tf_regime_horizon_oos"]=regime_horizon_analysis(test,cut)
                 st.session_state.pop("tf_error",None)
         except Exception as e:
             st.session_state["tf_error"]=f"{type(e).__name__}: {e}"
     if st.session_state.get("tf_error"):st.error(st.session_state["tf_error"])
     if "tf_comp" in st.session_state:
         comp=st.session_state["tf_comp"];tr=st.session_state["tf_trades"]
-        st.caption(f"Histórico {st.session_state['tf_hist']:,} velas · desarrollo {st.session_state['tf_cut']:,} · OOS {st.session_state['tf_hist']-st.session_state['tf_cut']:,}. 75 combinaciones: 5 umbrales × 5 filtros × 3 direcciones.")
+        st.caption(f"Histórico {st.session_state['tf_hist']:,} velas · desarrollo {st.session_state['tf_cut']:,} · OOS {st.session_state['tf_hist']-st.session_state['tf_cut']:,}. 75 combinaciones + validación next-open + distribución + régimen.")
         st.success("True Filter Diagnostic completado.")
         best=comp.replace([np.inf,-np.inf],np.nan).sort_values("Expectancy R",ascending=False).iloc[0]
         a,b,c,d=st.columns(4);a.metric("Mejor desarrollo",f"{best.Umbral} · {best.Filtro}");b.metric("Dirección",best.Dirección);c.metric("Expectativa",f"{best['Expectancy R']:.3f} R");d.metric("Trades",int(best.Trades))
         st.markdown("#### Comparación de filtros — desarrollo")
         view=comp.copy();view["Configuración"]=view.Filtro+" · "+view.Dirección
         st.dataframe(view.round({"Win rate %":1,"Profit factor":2,"Expectancy R":3,"Net R":2,"Max DD %":1,"Net return %":1}),use_container_width=True,hide_index=True)
-        st.markdown("#### 🔬 Signal Quality — ¿la señal anticipa movimiento?")
-        st.caption("Retorno futuro desde la vela de señal, con signo ajustado a la dirección. Evalúa poder predictivo, no rentabilidad de una estrategia.")
-        hv=st.session_state["tf_horizon_oos"]
+        st.markdown("#### 🔬 Predictive Edge — validación con entrada realista")
+        st.caption("V1.9.7 alinea el diagnóstico con la ejecución: señal al cierre de la vela i → entrada en apertura de i+1. El horizonte h mide el cierre de la h.ª vela desde esa entrada.")
+        hv=st.session_state["tf_horizon_exec_oos"]
         piv=hv.pivot_table(index=["Umbral","Dirección"],columns="Horizonte (h)",values="Retorno medio %",aggfunc="first").reset_index()
         st.dataframe(piv.round(3),use_container_width=True,hide_index=True)
-        besth=hv.sort_values("Retorno medio %",ascending=False).iloc[0]
-        st.success(f"Mejor retorno medio OOS: Score {int(besth.Umbral)} {besth.Dirección} a {int(besth["Horizonte (h)"])}h → {besth["Retorno medio %"]:.3f}% por señal.")
+        besth=hv.sort_values(["Retorno medio %","Señales"],ascending=[False,False]).iloc[0]
+        bu=int(besth["Umbral"]); bd=str(besth["Dirección"]); bh=int(besth["Horizonte (h)"])
+        br=float(besth["Retorno medio %"]); bn=int(besth["Señales"])
+        st.success(f"Mejor retorno medio OOS: Score {bu} {bd} a {bh}h → {br:.3f}% por señal (N={bn}).")
+
+        st.markdown("#### 📊 Robustez de la distribución OOS")
+        dist=hv[(hv["Umbral"].isin([6,7]))&(hv["Dirección"].isin(["LONG","SHORT"]))&(hv["Horizonte (h)"].isin([24,48]))].copy()
+        st.dataframe(dist[["Umbral","Dirección","Horizonte (h)","Señales","Retorno medio %","Mediana %","Win rate %","P25 %","P75 %","Desv. estándar %","Mejor %","Peor %"]].round(3),use_container_width=True,hide_index=True)
+        st.caption("La media puede ocultar colas. Mediana, P25/P75, win rate y peor resultado ayudan a comprobar si el efecto está repartido entre muchas señales o concentrado en unas pocas.")
+
+        st.markdown("#### 🔎 Comparación: cierre de señal vs entrada next-open")
+        hc=st.session_state["tf_horizon_close_oos"]
+        hc24=hc[(hc["Umbral"].isin([6,7]))&(hc["Dirección"].isin(["LONG","SHORT"]))&(hc["Horizonte (h)"].isin([24,48]))][["Umbral","Dirección","Horizonte (h)","Señales","Retorno medio %"]].copy()
+        he24=hv[(hv["Umbral"].isin([6,7]))&(hv["Dirección"].isin(["LONG","SHORT"]))&(hv["Horizonte (h)"].isin([24,48]))][["Umbral","Dirección","Horizonte (h)","Señales","Retorno medio %"]].copy()
+        hc24["Medición"]="Cierre señal → cierre futuro"; he24["Medición"]="Next-open → cierre futuro"
+        st.dataframe(pd.concat([hc24,he24],ignore_index=True).round(3),use_container_width=True,hide_index=True)
+
         st.markdown("#### 🌐 Regímenes de mercado — OOS")
         st.dataframe(st.session_state["tf_regime_oos"],use_container_width=True,hide_index=True)
-        st.info("V1.9.6 no cambia TP/SL ni intenta optimizar la estrategia: primero determina si las señales tienen capacidad predictiva, horizonte y régimen.")
+        st.markdown("#### 🧩 Señal + régimen + horizonte — OOS")
+        rh=st.session_state["tf_regime_horizon_oos"]
+        rhv=rh[(rh["Umbral"].isin([6,7]))&(rh["Horizonte (h)"].isin([24,48]))].copy()
+        st.dataframe(rhv.round(3),use_container_width=True,hide_index=True)
+        st.info("V1.9.7 no cambia TP/SL ni fuerza una estrategia positiva: primero valida si el efecto predictivo sobrevive al next-open, a la distribución, al horizonte y al régimen.")
         
         st.markdown("#### ¿Los filtros realmente filtran?")
         integ=comp.groupby(["Umbral","Dirección"]).agg(Configuraciones=("Filtro","nunique"),Min_trades=("Trades","min"),Max_trades=("Trades","max"),Min_expectativa=("Expectancy R","min"),Max_expectativa=("Expectancy R","max")).reset_index()
@@ -276,8 +383,18 @@ def render():
             fig.add_hline(y=0,line_dash="dash");fig.update_layout(height=320,margin=dict(l=8,r=8,t=15,b=8),xaxis_title="Salida UTC",yaxis_title="R acumulado",showlegend=False)
             st.plotly_chart(fig,use_container_width=True,config={"displaylogo":False})
             st.dataframe(tr,use_container_width=True,hide_index=True)
-        st.download_button("Descargar diagnóstico completo V1.9.6",comp.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_signal_quality_v1_9_6.csv",mime="text/csv")
+        export_cfg=comp.copy(); export_cfg["Tipo registro"]="Configuración desarrollo"; export_cfg["Segmento"]="Desarrollo"
+        export_oos=st.session_state["tf_oos"].copy(); export_oos["Tipo registro"]="Resultado OOS"; export_oos["Segmento"]="OOS"
+        export_tr=tr.copy(); export_tr["Tipo registro"]="Operación OOS"; export_tr["Segmento"]="OOS"
+        export_hc=st.session_state["tf_horizon_close_oos"].copy(); export_hc["Tipo registro"]="Horizonte cierre-señal"; export_hc["Segmento"]="OOS"
+        export_he=st.session_state["tf_horizon_exec_oos"].copy(); export_he["Tipo registro"]="Horizonte next-open"; export_he["Segmento"]="OOS"
+        export_rd=st.session_state["tf_regime_dev"].copy(); export_rd["Tipo registro"]="Régimen"; export_rd["Segmento"]="Desarrollo"
+        export_ro=st.session_state["tf_regime_oos"].copy(); export_ro["Tipo registro"]="Régimen"; export_ro["Segmento"]="OOS"
+        export_rhd=st.session_state["tf_regime_horizon_dev"].copy(); export_rhd["Tipo registro"]="Régimen + horizonte"; export_rhd["Segmento"]="Desarrollo"
+        export_rho=st.session_state["tf_regime_horizon_oos"].copy(); export_rho["Tipo registro"]="Régimen + horizonte"; export_rho["Segmento"]="OOS"
+        export_all=pd.concat([export_cfg,export_oos,export_tr,export_hc,export_he,export_rd,export_ro,export_rhd,export_rho],ignore_index=True,sort=False)
+        st.download_button("Descargar diagnóstico completo V1.9.7",export_all.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_predictive_edge_v1_9_7.csv",mime="text/csv")
     st.divider()
-    st.caption("V1.9.6 no pretende encontrar un resultado positivo a la fuerza: primero comprueba si existe poder predictivo, horizonte y régimen, y después valida la configuración elegida en OOS.")
+    st.caption("V1.9.7 no pretende encontrar un resultado positivo a la fuerza: comprueba si el efecto sobrevive a la ejecución next-open, a la distribución, al horizonte y al régimen antes de tocar TP/SL.")
 
 render()
