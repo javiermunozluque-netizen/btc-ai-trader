@@ -1,4 +1,4 @@
-# BUILD SYNC: 2026-10-07 V1.9.9
+# BUILD SYNC: 2026-10-07 V1.10.0
 
 import streamlit as st
 import pandas as pd
@@ -7,7 +7,7 @@ import requests
 import plotly.graph_objects as go
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.9.9", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.10.0", page_icon="₿", layout="wide")
 
 st.markdown("""<style>
 :root{--btc-accent:#f7931a}
@@ -366,6 +366,77 @@ def robustness_analysis(df,start_index=220):
     return pd.DataFrame(rows),pd.DataFrame(block_rows)
 
 
+def temporal_validation(df,start_index=220,boot_n=4000,seed=1100,block_len=48):
+    """
+    V1.10.0: temporal-dependence-aware validation for pre-specified
+    Score 6/7 LONG/SHORT, 24/48h hypotheses.
+    - Moving-block bootstrap over chronological signal returns.
+    - Random benchmark sampled within matching chronological quartiles.
+    - Fixed hypotheses; no parameter selection on these results.
+    """
+    x,sig=build_signals(df,start_index)
+    n=len(x); base=max(220,int(start_index)); score=sig["score"]
+    op=x.open.to_numpy(float); close=x.close.to_numpy(float)
+    rng=np.random.default_rng(seed)
+    rows=[]; walk=[]
+    for th in [6,7]:
+        for dm in ["LONG","SHORT"]:
+            sign=1 if dm=="LONG" else -1
+            eligible=np.where((np.arange(n)>=base+1)&(np.arange(n)<n-48))[0]
+            for h in [24,48]:
+                inds=np.where((np.abs(score)>=th)&(np.arange(n)>=base)&(np.arange(n)<n-48)&((score>0) if sign==1 else (score<0)))[0]
+                ei=inds+1; xi=ei+h-1; ok=(ei<n)&(xi<n); inds=inds[ok]; ei=ei[ok]; xi=xi[ok]
+                r=((close[xi]/op[ei])-1)*100*sign
+                N=len(r)
+                if N<8: continue
+                # Moving-block bootstrap preserves local dependence among consecutive signal observations.
+                L=min(int(block_len),N)
+                nblocks=int(np.ceil(N/L))
+                starts=rng.integers(0,N,size=(boot_n,nblocks))
+                samples=np.concatenate([np.take(r,(starts[:,j,None]+np.arange(L))%N) for j in range(nblocks)],axis=1)[:,:N]
+                bm=samples.mean(axis=1)
+                lo,hi=np.percentile(bm,[2.5,97.5])
+                # Benchmark: random signal timestamps sampled inside same chronological quartile.
+                q=np.minimum(3,(inds-base)/max(1,n-base)*4).astype(int)
+                nullmeans=[]
+                for _ in range(1500):
+                    rr=[]
+                    for quart in range(4):
+                        cnt=int(np.sum(q==quart))
+                        if not cnt: continue
+                        left=base+int((n-base)*quart/4)
+                        right=min(n-h-1,base+int((n-base)*(quart+1)/4))
+                        pool=np.arange(max(base,left),max(left+1,right))
+                        if len(pool)<cnt: picks=rng.choice(pool,size=cnt,replace=True)
+                        else: picks=rng.choice(pool,size=cnt,replace=False)
+                        ee=picks+1; xx=ee+h-1
+                        rr.extend((((close[xx]/op[ee])-1)*100*sign).tolist())
+                    if rr: nullmeans.append(float(np.mean(rr)))
+                null=np.asarray(nullmeans,float)
+                null_mean=float(np.mean(null)) if len(null) else 0.
+                p=float((1+np.sum(null>=float(np.mean(r))))/(len(null)+1)) if len(null) else 1.
+                rows.append({
+                    "Umbral":th,"Dirección":dm,"Horizonte (h)":h,"Señales":N,
+                    "Media %":float(np.mean(r)),"Mediana %":float(np.median(r)),
+                    "MBB IC95 inferior %":float(lo),"MBB IC95 superior %":float(hi),
+                    "Win rate %":float(np.mean(r>0)*100),
+                    "Benchmark temporal media %":null_mean,
+                    "Ventaja vs benchmark %":float(np.mean(r)-null_mean),
+                    "p vs benchmark temporal":p,"Longitud bloque señales":L
+                })
+                # Fixed-hypothesis walk-forward display, ordered by signal timestamp.
+                edges=np.linspace(0,N,5,dtype=int)
+                for k in range(4):
+                    z=r[edges[k]:edges[k+1]]
+                    walk.append({"Umbral":th,"Dirección":dm,"Horizonte (h)":h,
+                        "Bloque temporal":k+1,"Señales":len(z),
+                        "Media %":float(np.mean(z)) if len(z) else 0.,
+                        "Mediana %":float(np.median(z)) if len(z) else 0.,
+                        "Win rate %":float(np.mean(z>0)*100) if len(z) else 0.,
+                        "Media positiva":bool(np.mean(z)>0) if len(z) else False})
+    return pd.DataFrame(rows),pd.DataFrame(walk)
+
+
 def technical_score(df4,df1):
     a=df4.iloc[-1]; b=df1.iloc[-1]
     s4=2 if a.close>a.ema55>a.ema200 and a.ema55>df4.ema55.iloc[-4] else (1 if a.close>a.ema55 else (-2 if a.close<a.ema55<a.ema200 else -1))
@@ -383,7 +454,7 @@ def current_data(symbol):
 
 def render():
     st.title("₿ BTC AI Trader")
-    st.caption("V1.9.9 · Signal Quality Research · Technical research only · No order execution")
+    st.caption("V1.10.0 · Signal Quality Research · Technical research only · No order execution")
     with st.sidebar:
         st.header("Parámetros")
         symbol=st.text_input("Símbolo","BTCUSDT")
@@ -403,7 +474,7 @@ def render():
 
     st.divider()
     st.markdown("### Backtest y validación")
-    if st.button("Ejecutar Predictive Edge Validation V1.9.9",type="primary"):
+    if st.button("Ejecutar Predictive Edge Validation V1.10.0",type="primary"):
         try:
             with st.spinner("Validando entrada next-open, horizontes, distribución, regímenes y 75 combinaciones…"):
                 end=int(datetime.now(timezone.utc).timestamp()*1000);start=int((datetime.now(timezone.utc)-timedelta(days=365*5)).timestamp()*1000)
@@ -430,6 +501,7 @@ def render():
                 st.session_state["tf_regime_horizon_oos"]=regime_horizon_analysis(test,cut)
                 st.session_state["tf_edge_oos"],st.session_state["tf_edge_blocks_oos"]=edge_validation(test,cut,5000,198)
                 st.session_state["tf_robust_oos"],st.session_state["tf_robust_blocks_oos"]=robustness_analysis(test,cut)
+                st.session_state["tf_temporal_oos"],st.session_state["tf_walk_oos"]=temporal_validation(test,cut,4000,1100,48)
                 st.session_state.pop("tf_error",None)
         except Exception as e:
             st.session_state["tf_error"]=f"{type(e).__name__}: {e}"
@@ -444,7 +516,7 @@ def render():
         view=comp.copy();view["Configuración"]=view.Filtro+" · "+view.Dirección
         st.dataframe(view.round({"Win rate %":1,"Profit factor":2,"Expectancy R":3,"Net R":2,"Max DD %":1,"Net return %":1}),use_container_width=True,hide_index=True)
         st.markdown("#### 🔬 Predictive Edge — validación con entrada realista")
-        st.caption("V1.9.9 alinea el diagnóstico con la ejecución: señal al cierre de la vela i → entrada en apertura de i+1. El horizonte h mide el cierre de la h.ª vela desde esa entrada.")
+        st.caption("V1.10.0 alinea el diagnóstico con la ejecución: señal al cierre de la vela i → entrada en apertura de i+1. El horizonte h mide el cierre de la h.ª vela desde esa entrada.")
         hv=st.session_state["tf_horizon_exec_oos"]
         piv=hv.pivot_table(index=["Umbral","Dirección"],columns="Horizonte (h)",values="Retorno medio %",aggfunc="first").reset_index()
         st.dataframe(piv.round(3),use_container_width=True,hide_index=True)
@@ -471,9 +543,9 @@ def render():
         rh=st.session_state["tf_regime_horizon_oos"]
         rhv=rh[(rh["Umbral"].isin([6,7]))&(rh["Horizonte (h)"].isin([24,48]))].copy()
         st.dataframe(rhv.round(3),use_container_width=True,hide_index=True)
-        st.info("V1.9.9 no cambia TP/SL ni fuerza una estrategia positiva: primero valida si el efecto predictivo sobrevive al next-open, a la distribución, al horizonte y al régimen.")
+        st.info("V1.10.0 no cambia TP/SL ni fuerza una estrategia positiva: primero valida si el efecto predictivo sobrevive al next-open, a la distribución, al horizonte y al régimen.")
         
-        st.markdown("#### 🧪 V1.9.9 — Validación estadística del edge")
+        st.markdown("#### 🧪 V1.10.0 — Validación estadística del edge")
         st.caption("Hipótesis predefinidas: Score 6/7, LONG/SHORT, horizontes 24/48h. El benchmark aleatorio mantiene la dirección y el número de señales, pero elimina el criterio de score.")
         edge=st.session_state["tf_edge_oos"].copy()
         st.dataframe(edge.round(3),use_container_width=True,hide_index=True)
@@ -486,7 +558,7 @@ def render():
             st.metric(f"Score {int(fe['Umbral'])} SHORT · {int(fe['Horizonte (h)'])}h",f"{fe['Media %']:.3f}%","vs benchmark %+ .3f pp"%fe["Ventaja vs benchmark %"])
         bestedge=focus.sort_values(["Ventaja vs benchmark %","Señales"],ascending=[False,False]).iloc[0]
         st.success(f"Mayor ventaja OOS: Score {int(bestedge['Umbral'])} SHORT a {int(bestedge['Horizonte (h)'])}h → {bestedge['Ventaja vs benchmark %']:.3f} puntos porcentuales.")
-        st.info("V1.9.9 congela las cuatro hipótesis antes de mirar el resultado: no selecciona un nuevo TP/SL ni recalibra la señal. Si una ventaja es real, debería superar el benchmark y mostrar estabilidad en varios bloques OOS.")
+        st.info("V1.10.0 congela las cuatro hipótesis antes de mirar el resultado: no selecciona un nuevo TP/SL ni recalibra la señal. Si una ventaja es real, debería superar el benchmark y mostrar estabilidad en varios bloques OOS.")
         
 
         st.markdown("#### 🛡️ Robustez frente a outliers — OOS")
@@ -503,6 +575,23 @@ def render():
             worst=float(blocks["Media %"].min()) if not blocks.empty else 0.
             st.metric(f"Score {int(rr['Umbral'])} SHORT · {int(rr['Horizonte (h)'])}h",f"{rr['Media original %']:.3f}% → {rr['Sin top 10% %']:.3f}%","%d/4 bloques positivos · peor %.3f%%"%(pos,worst))
         st.info("La eliminación de outliers es una prueba de sensibilidad, no una nueva optimización. Un edge sano no debería desaparecer por completo al retirar una pequeña fracción de los mejores resultados.")
+        
+
+        st.markdown("#### 🧭 V1.10.0 — Validación temporal rigurosa")
+        st.caption("Hipótesis fijadas de antemano: Score 6/7, LONG/SHORT y 24/48h. El moving-block bootstrap conserva dependencia local entre retornos; el benchmark aleatorio se muestrea dentro de bloques cronológicos equivalentes.")
+        tv=st.session_state["tf_temporal_oos"].copy()
+        st.dataframe(tv.round(3),use_container_width=True,hide_index=True)
+        st.caption("El intervalo MBB es más prudente que remuestrear operaciones independientes, pero no elimina por sí solo todos los sesgos ni sustituye una validación externa independiente.")
+        st.markdown("##### Walk-forward descriptivo — cuatro segmentos OOS")
+        tw=st.session_state["tf_walk_oos"].copy()
+        st.dataframe(tw.round(3),use_container_width=True,hide_index=True)
+        for _,trv in tv[(tv["Dirección"]=="SHORT")&(tv["Horizonte (h)"].isin([24,48]))].iterrows():
+            seg=tw[(tw["Umbral"]==trv["Umbral"])&(tw["Dirección"]==trv["Dirección"])&(tw["Horizonte (h)"]==trv["Horizonte (h)"])]
+            positives=int(seg["Media positiva"].sum()) if not seg.empty else 0
+            st.metric(f"Score {int(trv['Umbral'])} SHORT · {int(trv['Horizonte (h)'])}h",
+                      f"{trv['Media %']:.3f}%",
+                      f"MBB IC95 {trv['MBB IC95 inferior %']:.3f} a {trv['MBB IC95 superior %']:.3f}% · {positives}/4 bloques positivos")
+        st.info("V1.10.0 no cambia TP/SL ni convierte automáticamente una hipótesis en estrategia. Solo se considerará avanzar si la ventaja persiste con incertidumbre temporal y en segmentos posteriores.")
         
         st.markdown("#### ¿Los filtros realmente filtran?")
         integ=comp.groupby(["Umbral","Dirección"]).agg(Configuraciones=("Filtro","nunique"),Min_trades=("Trades","min"),Max_trades=("Trades","max"),Min_expectativa=("Expectancy R","min"),Max_expectativa=("Expectancy R","max")).reset_index()
@@ -529,9 +618,11 @@ def render():
         export_blocks=st.session_state["tf_edge_blocks_oos"].copy(); export_blocks["Tipo registro"]="Estabilidad temporal"; export_blocks["Segmento"]="OOS"
         export_rob=st.session_state["tf_robust_oos"].copy(); export_rob["Tipo registro"]="Robustez outliers"; export_rob["Segmento"]="OOS"
         export_rob_blocks=st.session_state["tf_robust_blocks_oos"].copy(); export_rob_blocks["Tipo registro"]="Estabilidad bloques robustez"; export_rob_blocks["Segmento"]="OOS"
-        export_all=pd.concat([export_cfg,export_oos,export_tr,export_hc,export_he,export_rd,export_ro,export_rhd,export_rho,export_edge,export_blocks,export_rob,export_rob_blocks],ignore_index=True,sort=False)
-        st.download_button("Descargar diagnóstico completo V1.9.9",export_all.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_predictive_edge_v1_9_9.csv",mime="text/csv")
+        export_tv=st.session_state["tf_temporal_oos"].copy(); export_tv["Tipo registro"]="Validación temporal MBB"; export_tv["Segmento"]="OOS"
+        export_tw=st.session_state["tf_walk_oos"].copy(); export_tw["Tipo registro"]="Walk-forward temporal"; export_tw["Segmento"]="OOS"
+        export_all=pd.concat([export_cfg,export_oos,export_tr,export_hc,export_he,export_rd,export_ro,export_rhd,export_rho,export_edge,export_blocks,export_rob,export_rob_blocks,export_tv,export_tw],ignore_index=True,sort=False)
+        st.download_button("Descargar diagnóstico completo V1.10.0",export_all.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_predictive_edge_v1_10_0.csv",mime="text/csv")
     st.divider()
-    st.caption("V1.9.9 no pretende encontrar un resultado positivo a la fuerza: comprueba si el efecto sobrevive a la ejecución next-open, a la distribución, al horizonte y al régimen antes de tocar TP/SL.")
+    st.caption("V1.10.0 no pretende encontrar un resultado positivo a la fuerza: comprueba si el efecto sobrevive a la ejecución next-open, a la distribución, al horizonte y al régimen antes de tocar TP/SL.")
 
 render()
