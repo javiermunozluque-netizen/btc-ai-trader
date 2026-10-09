@@ -1,4 +1,4 @@
-# BUILD SYNC: 2026-10-07 V1.11.0
+# BUILD SYNC: 2026-10-07 V1.11.1
 
 import streamlit as st
 import pandas as pd
@@ -7,7 +7,7 @@ import requests
 import plotly.graph_objects as go
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.11.0", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.11.1", page_icon="₿", layout="wide")
 
 st.markdown("""<style>
 :root{--btc-accent:#f7931a}
@@ -368,7 +368,7 @@ def robustness_analysis(df,start_index=220):
 
 def walk_forward_validation(df,initial_train_fraction=0.50,n_folds=5,min_train_signals=8):
     """
-    V1.11.0: expanding-window walk-forward selection.
+    V1.11.1: expanding-window walk-forward selection.
     Select among eight predeclared score/direction/horizon configurations on train
     only; each outcome must finish within its own train or test segment.
     Test metrics are not used to select that fold's configuration.
@@ -397,7 +397,7 @@ def walk_forward_validation(df,initial_train_fraction=0.50,n_folds=5,min_train_s
         if not len(chosen): return np.asarray([],dtype=float)
         entry=chosen+1; exit_idx=entry+h-1
         valid=(entry<n)&(exit_idx<n)&(op[entry]>0)&(close[exit_idx]>0)
-        return ((close[exit_idx[valid]]/op[entry[valid])-1)*100*sgn)
+        return ((close[exit_idx[valid]] / op[entry[valid]]) - 1) * 100 * sgn
     rows=[]
     for fold in range(int(n_folds)):
         train_end=initial_end+fold*fold_size
@@ -442,7 +442,7 @@ def walk_forward_validation(df,initial_train_fraction=0.50,n_folds=5,min_train_s
 
 def temporal_validation(df,start_index=220,boot_n=4000,seed=1102,block_len=3):
     """
-    V1.11.0: audited temporal validation with genuinely randomized benchmark sets.
+    V1.11.1: audited temporal validation with genuinely randomized benchmark sets.
     Outcome windows are non-overlapping. Benchmark samples timestamps randomly
     within the same chronological quartiles, matching each quartile's signal count
     and enforcing non-overlap globally. Failed/infeasible replications are counted.
@@ -582,7 +582,7 @@ def current_data(symbol):
 
 def render():
     st.title("₿ BTC AI Trader")
-    st.caption("V1.11.0 · Signal Quality Research · Technical research only · No order execution")
+    st.caption("V1.11.1 · Signal Quality Research · Technical research only · No order execution")
     with st.sidebar:
         st.header("Parámetros")
         symbol=st.text_input("Símbolo","BTCUSDT")
@@ -602,7 +602,7 @@ def render():
 
     st.divider()
     st.markdown("### Backtest y validación")
-    if st.button("Ejecutar Predictive Edge Validation V1.11.0",type="primary"):
+    if st.button("Ejecutar Predictive Edge Validation V1.11.1",type="primary"):
         try:
             with st.spinner("Validando entrada next-open, horizontes, distribución, regímenes y 75 combinaciones…"):
                 end=int(datetime.now(timezone.utc).timestamp()*1000);start=int((datetime.now(timezone.utc)-timedelta(days=365*5)).timestamp()*1000)
@@ -645,7 +645,7 @@ def render():
         view=comp.copy();view["Configuración"]=view.Filtro+" · "+view.Dirección
         st.dataframe(view.round({"Win rate %":1,"Profit factor":2,"Expectancy R":3,"Net R":2,"Max DD %":1,"Net return %":1}),use_container_width=True,hide_index=True)
         st.markdown("#### 🔬 Predictive Edge — validación con entrada realista")
-        st.caption("V1.11.0 alinea el diagnóstico con la ejecución: señal al cierre de la vela i → entrada en apertura de i+1. El horizonte h mide el cierre de la h.ª vela desde esa entrada.")
+        st.caption("V1.11.1 alinea el diagnóstico con la ejecución: señal al cierre de la vela i → entrada en apertura de i+1. El horizonte h mide el cierre de la h.ª vela desde esa entrada.")
         hv=st.session_state["tf_horizon_exec_oos"]
         piv=hv.pivot_table(index=["Umbral","Dirección"],columns="Horizonte (h)",values="Retorno medio %",aggfunc="first").reset_index()
         st.dataframe(piv.round(3),use_container_width=True,hide_index=True)
@@ -672,13 +672,13 @@ def render():
         rh=st.session_state["tf_regime_horizon_oos"]
         rhv=rh[(rh["Umbral"].isin([6,7]))&(rh["Horizonte (h)"].isin([24,48]))].copy()
         st.dataframe(rhv.round(3),use_container_width=True,hide_index=True)
-        st.info("V1.11.0 no cambia TP/SL ni fuerza una estrategia positiva: primero valida si el efecto predictivo sobrevive al next-open, a la distribución, al horizonte y al régimen.")
+        st.info("V1.11.1 no cambia TP/SL ni fuerza una estrategia positiva: primero valida si el efecto predictivo sobrevive al next-open, a la distribución, al horizonte y al régimen.")
         
-        st.markdown("#### 🧭 V1.11.0 — Walk-forward real con ventana expansiva")
+        st.markdown("#### 🧭 V1.11.1 — Walk-forward real con ventana expansiva")
         st.caption("En cada fold se elige entre 8 configuraciones usando solo el entrenamiento; después se mide en el siguiente bloque cronológico. Retornos brutos next-open, sin costes; resumen descriptivo.")
         st.dataframe(st.session_state["tf_walk_forward"].round(3),use_container_width=True,hide_index=True)
 
-        st.markdown("#### 🧪 V1.11.0 — Validación estadística del edge")
+        st.markdown("#### 🧪 V1.11.1 — Validación estadística del edge")
         st.caption("Hipótesis predefinidas: Score 6/7, LONG/SHORT, horizontes 24/48h. El benchmark aleatorio mantiene la dirección y el número de señales, pero elimina el criterio de score.")
         edge=st.session_state["tf_edge_oos"].copy()
         st.dataframe(edge.round(3),use_container_width=True,hide_index=True)
@@ -691,7 +691,7 @@ def render():
             st.metric(f"Score {int(fe['Umbral'])} SHORT · {int(fe['Horizonte (h)'])}h",f"{fe['Media %']:.3f}%","vs benchmark %+ .3f pp"%fe["Ventaja vs benchmark %"])
         bestedge=focus.sort_values(["Ventaja vs benchmark %","Señales"],ascending=[False,False]).iloc[0]
         st.success(f"Mayor ventaja OOS: Score {int(bestedge['Umbral'])} SHORT a {int(bestedge['Horizonte (h)'])}h → {bestedge['Ventaja vs benchmark %']:.3f} puntos porcentuales.")
-        st.info("V1.11.0 congela las cuatro hipótesis antes de mirar el resultado: no selecciona un nuevo TP/SL ni recalibra la señal. Si una ventaja es real, debería superar el benchmark y mostrar estabilidad en varios bloques OOS.")
+        st.info("V1.11.1 congela las cuatro hipótesis antes de mirar el resultado: no selecciona un nuevo TP/SL ni recalibra la señal. Si una ventaja es real, debería superar el benchmark y mostrar estabilidad en varios bloques OOS.")
         
 
         st.markdown("#### 🛡️ Robustez frente a outliers — OOS")
@@ -710,7 +710,7 @@ def render():
         st.info("La eliminación de outliers es una prueba de sensibilidad, no una nueva optimización. Un edge sano no debería desaparecer por completo al retirar una pequeña fracción de los mejores resultados.")
         
 
-        st.markdown("#### 🧭 V1.11.0 — Validación temporal rigurosa")
+        st.markdown("#### 🧭 V1.11.1 — Validación temporal rigurosa")
         st.caption("Hipótesis fijadas de antemano: Score 6/7, LONG/SHORT y 24/48h. El moving-block bootstrap conserva dependencia local entre retornos; el benchmark aleatorio se muestrea dentro de bloques cronológicos equivalentes.")
         tv=st.session_state["tf_temporal_oos"].copy()
         st.dataframe(tv.round(3),use_container_width=True,hide_index=True)
@@ -724,7 +724,7 @@ def render():
             st.metric(f"Score {int(trv['Umbral'])} SHORT · {int(trv['Horizonte (h)'])}h",
                       f"{trv['Media %']:.3f}%",
                       f"MBB IC95 {trv['MBB IC95 inferior %']:.3f} a {trv['MBB IC95 superior %']:.3f}% · {positives}/4 bloques positivos")
-        st.info("V1.11.0 no cambia TP/SL ni convierte automáticamente una hipótesis en estrategia. Solo se considerará avanzar si la ventaja persiste con incertidumbre temporal y en segmentos posteriores.")
+        st.info("V1.11.1 no cambia TP/SL ni convierte automáticamente una hipótesis en estrategia. Solo se considerará avanzar si la ventaja persiste con incertidumbre temporal y en segmentos posteriores.")
         
         st.markdown("#### ¿Los filtros realmente filtran?")
         integ=comp.groupby(["Umbral","Dirección"]).agg(Configuraciones=("Filtro","nunique"),Min_trades=("Trades","min"),Max_trades=("Trades","max"),Min_expectativa=("Expectancy R","min"),Max_expectativa=("Expectancy R","max")).reset_index()
@@ -753,10 +753,10 @@ def render():
         export_rob_blocks=st.session_state["tf_robust_blocks_oos"].copy(); export_rob_blocks["Tipo registro"]="Estabilidad bloques robustez"; export_rob_blocks["Segmento"]="OOS"
         export_tv=st.session_state["tf_temporal_oos"].copy(); export_tv["Tipo registro"]="Validación temporal MBB + benchmark aleatorio auditado + bootstrap corregido"; export_tv["Segmento"]="OOS"
         export_tw=st.session_state["tf_walk_oos"].copy(); export_tw["Tipo registro"]="Bloques cronológicos descriptivos"; export_tw["Segmento"]="OOS"
-        export_wf=st.session_state["tf_walk_forward"].copy(); export_wf["Tipo registro"]="Walk-forward expanding window V1.11.0"; export_wf["Segmento"]="OOS secuencial"
+        export_wf=st.session_state["tf_walk_forward"].copy(); export_wf["Tipo registro"]="Walk-forward expanding window V1.11.1"; export_wf["Segmento"]="OOS secuencial"
         export_all=pd.concat([export_cfg,export_oos,export_tr,export_hc,export_he,export_rd,export_ro,export_rhd,export_rho,export_edge,export_blocks,export_rob,export_rob_blocks,export_tv,export_tw,export_wf],ignore_index=True,sort=False)
-        st.download_button("Descargar diagnóstico completo V1.11.0",export_all.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_predictive_edge_v1_11_0.csv",mime="text/csv")
+        st.download_button("Descargar diagnóstico completo V1.11.1",export_all.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_predictive_edge_v1_11_1.csv",mime="text/csv")
     st.divider()
-    st.caption("V1.11.0: benchmark aleatorio con selección genuinamente aleatoria, control de solapamiento y réplicas válidas/fallidas visibles. Los bloques cronológicos son descriptivos; no equivalen a walk-forward con reentrenamiento.")
+    st.caption("V1.11.1: benchmark aleatorio con selección genuinamente aleatoria, control de solapamiento y réplicas válidas/fallidas visibles. Los bloques cronológicos son descriptivos; no equivalen a walk-forward con reentrenamiento.")
 
 render()
