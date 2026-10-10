@@ -1,4 +1,4 @@
-# BUILD SYNC: 2026-10-10 V1.16.0
+# BUILD SYNC: 2026-10-10 V1.16.1
 
 import streamlit as st
 import pandas as pd
@@ -7,7 +7,7 @@ import requests
 import plotly.graph_objects as go
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.16.0", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.16.1", page_icon="₿", layout="wide")
 
 st.markdown("""<style>
 :root{--btc-accent:#f7931a}
@@ -576,8 +576,8 @@ def variant_diagnostic_validation(df,initial_train_fraction=0.50,n_folds=5,rando
 
 
 
-def confirmatory_holdout_test(df, holdout_fraction=0.20, random_reps=5000, boot_reps=5000, seed=1616):
-    """One predeclared Score >=7 LONG, 48h test on the final chronological holdout."""
+def confirmatory_holdout_test(df, holdout_fraction=0.20, random_reps=2000, boot_reps=3000, seed=1616):
+    """V1.16.1: one predeclared Score >=7 LONG, 48h test on final chronological holdout."""
     x, sig = build_signals(df, 220)
     n=len(x); base=220; h=48
     if n-base < 1000: raise ValueError("Se necesitan al menos 1.000 velas tras indicadores para la prueba confirmatoria.")
@@ -592,7 +592,7 @@ def confirmatory_holdout_test(df, holdout_fraction=0.20, random_reps=5000, boot_
         if i>=next_allowed:
             selected.append(int(i)); next_allowed=int(i)+h
     selected=np.asarray(selected,dtype=int)
-    if len(selected)<5: raise ValueError(f"Solo hay {len(selected)} operaciones válidas en el holdout; se necesitan al menos 5 para un análisis mínimamente informativo.")
+    if len(selected)<5: raise ValueError(f"Solo hay {len(selected)} operaciones válidas en el holdout; se necesitan al menos 5.")
     def returns_at(ix):
         ix=np.asarray(ix,dtype=int)
         return (close[ix+h]/op[ix+1]-1.0)*100.0
@@ -603,20 +603,20 @@ def confirmatory_holdout_test(df, holdout_fraction=0.20, random_reps=5000, boot_
     for i in range(split,n-h):
         if op[i+1]>0 and close[i+h]>0: pools.setdefault(month[i],[]).append(i)
     pool_arrays={k:np.asarray(v,dtype=int) for k,v in pools.items()}
-    rng=np.random.default_rng(seed); null_means=[]
-    for _ in range(int(random_reps)):
-        chosen=[]; feasible=True; month_keys=list(observed_months); rng.shuffle(month_keys)
-        for m in month_keys:
-            need=observed_months[m]; pool=pool_arrays.get(m,np.asarray([],dtype=int))
-            picks=rng.permutation(pool); added=0
-            for ix in picks:
-                if all(abs(int(ix)-int(old))>=h for old in chosen):
-                    chosen.append(int(ix)); added+=1
-                    if added==need: break
-            if added<need: feasible=False; break
-        if feasible and len(chosen)==len(selected): null_means.append(float(np.mean(returns_at(chosen))))
-    if len(null_means)<max(100,int(random_reps)*0.10):
-        raise ValueError("No se pudieron generar suficientes benchmarks comparables en el periodo reservado.")
+    rng=np.random.default_rng(seed); null_means=[]; target=max(100,int(random_reps)*0.10)
+    attempts=0; max_attempts=int(random_reps)*12
+    while len(null_means)<int(random_reps) and attempts<max_attempts:
+        attempts+=1; parts=[]; feasible=True
+        for m,need in observed_months.items():
+            pool=pool_arrays.get(m,np.asarray([],dtype=int))
+            if len(pool)<need: feasible=False; break
+            parts.append(rng.choice(pool,size=need,replace=False))
+        if not feasible: continue
+        chosen=np.sort(np.concatenate(parts))
+        if len(chosen)>1 and np.any(np.diff(chosen)<h): continue
+        null_means.append(float(np.mean(returns_at(chosen))))
+    if len(null_means)<target:
+        raise ValueError(f"Benchmark comparable insuficiente: solo {len(null_means)} réplicas válidas.")
     null=np.asarray(null_means); mean_obs=float(np.mean(observed))
     p_value=float((1+np.sum(null>=mean_obs))/(len(null)+1))
     block=min(3,len(observed)); boot_means=np.empty(int(boot_reps),dtype=float)
@@ -643,6 +643,7 @@ def confirmatory_holdout_test(df, holdout_fraction=0.20, random_reps=5000, boot_
         "Dirección":"LONG","Score señal":score[selected].astype(int),"Precio entrada":op[selected+1],
         "Precio salida":close[selected+h],"Retorno bruto %":observed,"Horizonte (h)":h})
     return out,trades
+
 
 
 def temporal_validation(df,start_index=220,boot_n=4000,seed=1102,block_len=3):
@@ -787,7 +788,7 @@ def current_data(symbol):
 
 def render():
     st.title("₿ BTC AI Trader")
-    st.caption("V1.16.0 · Confirmatory Holdout Research · Technical research only · No order execution")
+    st.caption("V1.16.1 · Confirmatory Holdout Research · Technical research only · No order execution")
     with st.sidebar:
         st.header("Parámetros")
         symbol=st.text_input("Símbolo","BTCUSDT")
@@ -807,7 +808,7 @@ def render():
 
     st.divider()
     st.markdown("### Backtest y validación")
-    if st.button("Ejecutar validación confirmatoria V1.16.0",type="primary"):
+    if st.button("Ejecutar validación confirmatoria V1.16.1",type="primary"):
         try:
             with st.spinner("Validando entrada next-open, horizontes, distribución, regímenes y 75 combinaciones…"):
                 end=int(datetime.now(timezone.utc).timestamp()*1000);start=int((datetime.now(timezone.utc)-timedelta(days=365*5)).timestamp()*1000)
@@ -837,7 +838,13 @@ def render():
                 st.session_state["tf_temporal_oos"],st.session_state["tf_walk_oos"]=temporal_validation(test,cut,4000,seed=1100,block_len=3)
                 st.session_state["tf_walk_forward"]=walk_forward_validation(hist,initial_train_fraction=0.50,n_folds=5,min_train_signals=8)
                 st.session_state["tf_variant_diagnostic"]=variant_diagnostic_validation(hist,initial_train_fraction=0.50,n_folds=5,random_reps=500,boot_reps=1000,seed=1515)
-                st.session_state["tf_confirmatory"],st.session_state["tf_confirmatory_trades"]=confirmatory_holdout_test(hist,holdout_fraction=0.20,random_reps=5000,boot_reps=5000,seed=1616)
+                try:
+                    st.session_state["tf_confirmatory"],st.session_state["tf_confirmatory_trades"]=confirmatory_holdout_test(hist,holdout_fraction=0.20,random_reps=2000,boot_reps=3000,seed=1616)
+                    st.session_state.pop("tf_confirmatory_error",None)
+                except Exception as ce:
+                    st.session_state["tf_confirmatory"]=None
+                    st.session_state["tf_confirmatory_trades"]=pd.DataFrame()
+                    st.session_state["tf_confirmatory_error"]=f"{type(ce).__name__}: {ce}"
                 st.session_state.pop("tf_error",None)
         except Exception as e:
             st.session_state["tf_error"]=f"{type(e).__name__}: {e}"
@@ -885,7 +892,7 @@ def render():
         st.caption("En cada fold se elige entre 16 variantes usando solo el entrenamiento y retornos brutos; se evalúa en el siguiente bloque. No se descuentan costes fijos ni variables. Incluye filtro opcional de alineación EMA55/EMA200. Resumen descriptivo.")
         st.dataframe(st.session_state["tf_walk_forward"].round(3),use_container_width=True,hide_index=True)
 
-        st.markdown("#### 🎯 V1.16.0 — Prueba confirmatoria en periodo reservado")
+        st.markdown("#### 🎯 V1.16.1 — Prueba confirmatoria en periodo reservado")
         st.caption("Una sola hipótesis predefinida: Score >= 7 LONG, horizonte 48h. Se reserva cronológicamente el último 20% del histórico. Benchmark aleatorio con igual número de operaciones por mes, mismo horizonte y operaciones no solapadas. Retornos brutos, sin costes.")
         conf=st.session_state.get("tf_confirmatory")
         if conf is not None and not conf.empty:
@@ -902,7 +909,9 @@ def render():
                 st.warning("La hipótesis NO queda confirmada con estos datos. No la conviertas en estrategia operativa ni pruebes variantes nuevas sobre este mismo holdout.")
             st.markdown("##### Operaciones del periodo reservado")
             st.dataframe(st.session_state["tf_confirmatory_trades"].round(4),use_container_width=True,hide_index=True)
-            st.download_button("Descargar prueba confirmatoria V1.16.0",conf.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_confirmatory_v1_16_0.csv",mime="text/csv")
+            st.download_button("Descargar prueba confirmatoria V1.16.1",conf.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_confirmatory_v1_16_1.csv",mime="text/csv")
+        elif st.session_state.get("tf_confirmatory_error"):
+            st.warning("El análisis general se ha completado, pero el test confirmatorio no pudo calcularse: " + st.session_state["tf_confirmatory_error"])
         else:
             st.info("Pulsa ejecutar para calcular el test confirmatorio.")
         
@@ -988,8 +997,8 @@ def render():
         export_wf=st.session_state["tf_walk_forward"].copy(); export_wf["Tipo registro"]="Walk-forward expanding window V1.15.0"; export_wf["Segmento"]="OOS secuencial"
         export_vd=st.session_state["tf_variant_diagnostic"].copy(); export_vd["Tipo registro"]="Diagnóstico estadístico variantes V1.15.0"; export_vd["Segmento"]="OOS por variante"
         export_all=pd.concat([export_cfg,export_oos,export_tr,export_hc,export_he,export_rd,export_ro,export_rhd,export_rho,export_edge,export_blocks,export_rob,export_rob_blocks,export_tv,export_tw,export_wf,export_vd],ignore_index=True,sort=False)
-        st.download_button("Descargar diagnóstico completo V1.16.0",export_all.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_predictive_edge_v1_16_0.csv",mime="text/csv")
+        st.download_button("Descargar diagnóstico completo V1.16.0",export_all.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_predictive_edge_v1_16_1.csv",mime="text/csv")
     st.divider()
-    st.caption("V1.16.0: incorpora una prueba confirmatoria única sobre el último 20% cronológico reservado. Test bruto sin costes; el benchmark iguala recuento mensual, horizonte y no solapamiento. La validación no garantiza resultados futuros.")
+    st.caption("V1.16.1: incorpora una prueba confirmatoria única sobre el último 20% cronológico reservado. Test bruto sin costes; el benchmark iguala recuento mensual, horizonte y no solapamiento. La validación no garantiza resultados futuros.")
 
 render()
