@@ -1,4 +1,4 @@
-# BUILD SYNC: 2026-10-07 V1.12.0
+# BUILD SYNC: 2026-10-07 V1.13.0
 
 import streamlit as st
 import pandas as pd
@@ -7,7 +7,7 @@ import requests
 import plotly.graph_objects as go
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.12.0", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.13.0", page_icon="₿", layout="wide")
 
 st.markdown("""<style>
 :root{--btc-accent:#f7931a}
@@ -366,16 +366,16 @@ def robustness_analysis(df,start_index=220):
     return pd.DataFrame(rows),pd.DataFrame(block_rows)
 
 
-def walk_forward_validation(df,initial_train_fraction=0.50,n_folds=5,min_train_signals=8,fee_bps=5.0,slippage_bps=2.0):
+def walk_forward_validation(df,initial_train_fraction=0.50,n_folds=5,min_train_signals=8,fee_bps=0.0,slippage_bps=0.0):
     """
-    V1.12.0: expanding-window walk-forward with costs included in selection and OOS.
-    Eight predeclared configurations; only training returns select each fold.
-    Each outcome window must finish before its segment boundary. Costs are modeled
-    as round-trip fee + slippage in basis points, applied to notional return.
+    V1.13.0: gross-return expanding-window walk-forward; no fixed transaction costs.
+    Compare predeclared configurations with/without a trend-alignment filter.
+    Each signal's complete outcome must finish within its train/test segment.
     """
     x,sig=build_signals(df,220)
     n=len(x); score=np.asarray(sig["score"],dtype=float)
     op=x.open.to_numpy(float); close=x.close.to_numpy(float)
+    ema55=x.ema55.to_numpy(float); ema200=x.ema200.to_numpy(float)
     base=220
     if n-base < 500:
         raise ValueError("Histórico insuficiente para walk-forward (mínimo 500 velas tras indicadores).")
@@ -383,29 +383,28 @@ def walk_forward_validation(df,initial_train_fraction=0.50,n_folds=5,min_train_s
     initial_end=min(n-1,max(base+200,int(base+(n-base)*initial_train_fraction)))
     remaining=n-initial_end
     fold_size=max(1,remaining//int(n_folds))
-    cost_pct=2.0*(float(fee_bps)+float(slippage_bps))/100.0
-    configs=[(th,dm,h) for th in (6,7) for dm in ("LONG","SHORT") for h in (24,48)]
+    configs=[(th,dm,h,trend_filter) for th in (6,7) for dm in ("LONG","SHORT") for h in (24,48) for trend_filter in (False,True)]
 
-    def get_returns(left,right,th,dm,h):
-        # Signal at close i, entry open i+1, exit close i+h.
-        # Strict boundary: exit must be strictly before right.
+    def get_returns(left,right,th,dm,h,trend_filter):
+        # Signal at close i, entry at open i+1, exit at close i+h.
         lo=max(base,int(left)); hi=min(n-h,int(right)-h)
-        if hi<=lo: return np.asarray([],dtype=float),np.asarray([],dtype=float)
+        if hi<=lo: return np.asarray([],dtype=float)
         idx=np.arange(lo,hi,dtype=int)
         sgn=1 if dm=="LONG" else -1
-        raw=idx[(np.abs(score[idx])>=th)&((score[idx]>0) if sgn==1 else (score[idx]<0))]
+        mask=(np.abs(score[idx])>=th)&((score[idx]>0) if sgn==1 else (score[idx]<0))
+        if trend_filter:
+            trend_ok=(ema55[idx]>ema200[idx]) if sgn==1 else (ema55[idx]<ema200[idx])
+            mask &= trend_ok
+        raw=idx[mask]
         chosen=[]; next_allowed=-1
         for i in raw:
             if i>=next_allowed:
                 chosen.append(int(i)); next_allowed=int(i)+h
         chosen=np.asarray(chosen,dtype=int)
-        if not len(chosen): return np.asarray([],dtype=float),np.asarray([],dtype=float)
+        if not len(chosen): return np.asarray([],dtype=float)
         entry=chosen+1; exit_idx=entry+h-1
         valid=(entry<n)&(exit_idx<n)&(op[entry]>0)&(close[exit_idx]>0)
-        gross=((close[exit_idx[valid]]/op[entry[valid]])-1)*100*sgn
-        # Approximate round-trip costs as % of notional; not a full execution simulator.
-        net=gross-cost_pct
-        return gross,net
+        return ((close[exit_idx[valid]]/op[entry[valid])-1)*100*sgn)
 
     rows=[]
     for fold in range(int(n_folds)):
@@ -413,33 +412,31 @@ def walk_forward_validation(df,initial_train_fraction=0.50,n_folds=5,min_train_s
         test_end=n if fold==int(n_folds)-1 else min(n,train_end+fold_size)
         if train_end>=n or test_end<=train_end: continue
         candidates=[]
-        for th,dm,h in configs:
-            gross,net=get_returns(base,train_end,th,dm,h)
-            if len(net)>=int(min_train_signals):
-                candidates.append((float(np.mean(net)),len(net),th,dm,h,float(np.mean(gross))))
+        for th,dm,h,trend_filter in configs:
+            train_r=get_returns(base,train_end,th,dm,h,trend_filter)
+            if len(train_r)>=int(min_train_signals):
+                candidates.append((float(np.mean(train_r)),len(train_r),th,dm,h,trend_filter,float(np.median(train_r))))
         if not candidates:
             rows.append({"Fold":fold+1,"Estado":"Sin configuración con muestra mínima",
-                         "Fin entrenamiento":train_end,"Inicio test":train_end,"Fin test":test_end,
-                         "Comisión por lado (bps)":float(fee_bps),"Deslizamiento por lado (bps)":float(slippage_bps)})
+                         "Fin entrenamiento":train_end,"Inicio test":train_end,"Fin test":test_end})
             continue
-        # Select on net training mean only; no test values used for ranking.
+        # Choose using gross training mean only; test results do not affect selection.
         candidates.sort(key=lambda z:(z[0],z[1]),reverse=True)
-        train_net_mean,train_n,th,dm,h,train_gross_mean=candidates[0]
-        test_gross,test_net=get_returns(train_end,test_end,th,dm,h)
+        train_mean,train_n,th,dm,h,trend_filter,train_median=candidates[0]
+        test_r=get_returns(train_end,test_end,th,dm,h,trend_filter)
         rows.append({
-            "Fold":fold+1,"Estado":"OK" if len(test_net)>0 else "Sin señales OOS",
+            "Fold":fold+1,"Estado":"OK" if len(test_r)>0 else "Sin señales OOS",
             "Umbral elegido":th,"Dirección elegida":dm,"Horizonte elegido (h)":h,
-            "Señales train":train_n,"Media train bruta %":train_gross_mean,"Media train neta %":train_net_mean,
-            "Señales test":len(test_net),
-            "Media test OOS bruta %":float(np.mean(test_gross)) if len(test_gross) else np.nan,
-            "Media test OOS neta %":float(np.mean(test_net)) if len(test_net) else np.nan,
-            "Mediana test OOS neta %":float(np.median(test_net)) if len(test_net) else np.nan,
-            "Win rate test OOS neta %":float(np.mean(test_net>0)*100) if len(test_net) else np.nan,
-            "Suma retornos test OOS neta %":float(np.sum(test_net)) if len(test_net) else np.nan,
-            "Comisión por lado (bps)":float(fee_bps),"Deslizamiento por lado (bps)":float(slippage_bps),
+            "Filtro tendencia": "Alineado" if trend_filter else "Sin filtro",
+            "Señales train":train_n,"Media train bruta %":train_mean,"Mediana train bruta %":train_median,
+            "Señales test":len(test_r),
+            "Media test OOS bruta %":float(np.mean(test_r)) if len(test_r) else np.nan,
+            "Mediana test OOS bruta %":float(np.median(test_r)) if len(test_r) else np.nan,
+            "Win rate test OOS bruta %":float(np.mean(test_r>0)*100) if len(test_r) else np.nan,
+            "Suma retornos test OOS bruta %":float(np.sum(test_r)) if len(test_r) else np.nan,
             "Inicio entrenamiento":base,"Fin entrenamiento":train_end,
             "Inicio test":train_end,"Fin test":test_end,
-            "Método":"Ventana expansiva; selección por media neta train; coste estimado"
+            "Método":"Ventana expansiva; 16 variantes; selección solo train; sin costes"
         })
     result=pd.DataFrame(rows)
     if not result.empty and "Señales test" in result:
@@ -447,17 +444,15 @@ def walk_forward_validation(df,initial_train_fraction=0.50,n_folds=5,min_train_s
         summary={"Fold":"RESUMEN OOS","Estado":"Descriptivo; folds no independientes",
                  "Señales test":int(valid["Señales test"].sum()) if len(valid) else 0,
                  "Media test OOS bruta %":float(np.average(valid["Media test OOS bruta %"],weights=valid["Señales test"])) if len(valid) else np.nan,
-                 "Media test OOS neta %":float(np.average(valid["Media test OOS neta %"],weights=valid["Señales test"])) if len(valid) else np.nan,
-                 "Suma retornos test OOS neta %":float(valid["Suma retornos test OOS neta %"].sum()) if len(valid) else np.nan,
-                 "Comisión por lado (bps)":float(fee_bps),"Deslizamiento por lado (bps)":float(slippage_bps),
-                 "Método":"Ponderado por señales; costes estimados; no compuesto"}
+                 "Suma retornos test OOS bruta %":float(valid["Suma retornos test OOS bruta %"].sum()) if len(valid) else np.nan,
+                 "Método":"Ponderado por señales; retorno bruto; sin costes; no compuesto"}
         result=pd.concat([result,pd.DataFrame([summary])],ignore_index=True)
     return result
 
 
 def temporal_validation(df,start_index=220,boot_n=4000,seed=1102,block_len=3):
     """
-    V1.12.0: audited temporal validation with genuinely randomized benchmark sets.
+    V1.13.0: audited temporal validation with genuinely randomized benchmark sets.
     Outcome windows are non-overlapping. Benchmark samples timestamps randomly
     within the same chronological quartiles, matching each quartile's signal count
     and enforcing non-overlap globally. Failed/infeasible replications are counted.
@@ -597,7 +592,7 @@ def current_data(symbol):
 
 def render():
     st.title("₿ BTC AI Trader")
-    st.caption("V1.12.0 · Signal Quality Research · Technical research only · No order execution")
+    st.caption("V1.13.0 · Signal Quality Research · Technical research only · No order execution")
     with st.sidebar:
         st.header("Parámetros")
         symbol=st.text_input("Símbolo","BTCUSDT")
@@ -617,7 +612,7 @@ def render():
 
     st.divider()
     st.markdown("### Backtest y validación")
-    if st.button("Ejecutar Predictive Edge Validation V1.12.0",type="primary"):
+    if st.button("Ejecutar Predictive Edge Validation V1.13.0",type="primary"):
         try:
             with st.spinner("Validando entrada next-open, horizontes, distribución, regímenes y 75 combinaciones…"):
                 end=int(datetime.now(timezone.utc).timestamp()*1000);start=int((datetime.now(timezone.utc)-timedelta(days=365*5)).timestamp()*1000)
@@ -645,7 +640,7 @@ def render():
                 st.session_state["tf_edge_oos"],st.session_state["tf_edge_blocks_oos"]=edge_validation(test,cut,5000,198)
                 st.session_state["tf_robust_oos"],st.session_state["tf_robust_blocks_oos"]=robustness_analysis(test,cut)
                 st.session_state["tf_temporal_oos"],st.session_state["tf_walk_oos"]=temporal_validation(test,cut,4000,seed=1100,block_len=3)
-                st.session_state["tf_walk_forward"]=walk_forward_validation(hist,initial_train_fraction=0.50,n_folds=5,min_train_signals=8,fee_bps=fee_bps,slippage_bps=slippage_bps)
+                st.session_state["tf_walk_forward"]=walk_forward_validation(hist,initial_train_fraction=0.50,n_folds=5,min_train_signals=8)
                 st.session_state.pop("tf_error",None)
         except Exception as e:
             st.session_state["tf_error"]=f"{type(e).__name__}: {e}"
@@ -660,7 +655,7 @@ def render():
         view=comp.copy();view["Configuración"]=view.Filtro+" · "+view.Dirección
         st.dataframe(view.round({"Win rate %":1,"Profit factor":2,"Expectancy R":3,"Net R":2,"Max DD %":1,"Net return %":1}),use_container_width=True,hide_index=True)
         st.markdown("#### 🔬 Predictive Edge — validación con entrada realista")
-        st.caption("V1.12.0 alinea el diagnóstico con la ejecución: señal al cierre de la vela i → entrada en apertura de i+1. El horizonte h mide el cierre de la h.ª vela desde esa entrada.")
+        st.caption("V1.13.0 alinea el diagnóstico con la ejecución: señal al cierre de la vela i → entrada en apertura de i+1. El horizonte h mide el cierre de la h.ª vela desde esa entrada.")
         hv=st.session_state["tf_horizon_exec_oos"]
         piv=hv.pivot_table(index=["Umbral","Dirección"],columns="Horizonte (h)",values="Retorno medio %",aggfunc="first").reset_index()
         st.dataframe(piv.round(3),use_container_width=True,hide_index=True)
@@ -687,13 +682,13 @@ def render():
         rh=st.session_state["tf_regime_horizon_oos"]
         rhv=rh[(rh["Umbral"].isin([6,7]))&(rh["Horizonte (h)"].isin([24,48]))].copy()
         st.dataframe(rhv.round(3),use_container_width=True,hide_index=True)
-        st.info("V1.12.0 no cambia TP/SL ni fuerza una estrategia positiva: primero valida si el efecto predictivo sobrevive al next-open, a la distribución, al horizonte y al régimen.")
+        st.info("V1.13.0 no cambia TP/SL ni fuerza una estrategia positiva: primero valida si el efecto predictivo sobrevive al next-open, a la distribución, al horizonte y al régimen.")
         
-        st.markdown("#### 🧭 V1.12.0 — Walk-forward real con ventana expansiva")
-        st.caption("En cada fold se elige entre 8 configuraciones usando solo el entrenamiento y la media neta estimada; se evalúa en el siguiente bloque. Incluye costes estimados configurados en bps; no modela stops/targets ni impacto de mercado. Resumen descriptivo.")
+        st.markdown("#### 🧭 V1.13.0 — Walk-forward real con ventana expansiva")
+        st.caption("En cada fold se elige entre 16 variantes usando solo el entrenamiento y retornos brutos; se evalúa en el siguiente bloque. No se descuentan costes fijos ni variables. Incluye filtro opcional de alineación EMA55/EMA200. Resumen descriptivo.")
         st.dataframe(st.session_state["tf_walk_forward"].round(3),use_container_width=True,hide_index=True)
 
-        st.markdown("#### 🧪 V1.12.0 — Validación estadística del edge")
+        st.markdown("#### 🧪 V1.13.0 — Validación estadística del edge")
         st.caption("Hipótesis predefinidas: Score 6/7, LONG/SHORT, horizontes 24/48h. El benchmark aleatorio mantiene la dirección y el número de señales, pero elimina el criterio de score.")
         edge=st.session_state["tf_edge_oos"].copy()
         st.dataframe(edge.round(3),use_container_width=True,hide_index=True)
@@ -706,7 +701,7 @@ def render():
             st.metric(f"Score {int(fe['Umbral'])} SHORT · {int(fe['Horizonte (h)'])}h",f"{fe['Media %']:.3f}%","vs benchmark %+ .3f pp"%fe["Ventaja vs benchmark %"])
         bestedge=focus.sort_values(["Ventaja vs benchmark %","Señales"],ascending=[False,False]).iloc[0]
         st.success(f"Mayor ventaja OOS: Score {int(bestedge['Umbral'])} SHORT a {int(bestedge['Horizonte (h)'])}h → {bestedge['Ventaja vs benchmark %']:.3f} puntos porcentuales.")
-        st.info("V1.12.0 congela las cuatro hipótesis antes de mirar el resultado: no selecciona un nuevo TP/SL ni recalibra la señal. Si una ventaja es real, debería superar el benchmark y mostrar estabilidad en varios bloques OOS.")
+        st.info("V1.13.0 congela las cuatro hipótesis antes de mirar el resultado: no selecciona un nuevo TP/SL ni recalibra la señal. Si una ventaja es real, debería superar el benchmark y mostrar estabilidad en varios bloques OOS.")
         
 
         st.markdown("#### 🛡️ Robustez frente a outliers — OOS")
@@ -725,7 +720,7 @@ def render():
         st.info("La eliminación de outliers es una prueba de sensibilidad, no una nueva optimización. Un edge sano no debería desaparecer por completo al retirar una pequeña fracción de los mejores resultados.")
         
 
-        st.markdown("#### 🧭 V1.12.0 — Validación temporal rigurosa")
+        st.markdown("#### 🧭 V1.13.0 — Validación temporal rigurosa")
         st.caption("Hipótesis fijadas de antemano: Score 6/7, LONG/SHORT y 24/48h. El moving-block bootstrap conserva dependencia local entre retornos; el benchmark aleatorio se muestrea dentro de bloques cronológicos equivalentes.")
         tv=st.session_state["tf_temporal_oos"].copy()
         st.dataframe(tv.round(3),use_container_width=True,hide_index=True)
@@ -739,7 +734,7 @@ def render():
             st.metric(f"Score {int(trv['Umbral'])} SHORT · {int(trv['Horizonte (h)'])}h",
                       f"{trv['Media %']:.3f}%",
                       f"MBB IC95 {trv['MBB IC95 inferior %']:.3f} a {trv['MBB IC95 superior %']:.3f}% · {positives}/4 bloques positivos")
-        st.info("V1.12.0 no cambia TP/SL ni convierte automáticamente una hipótesis en estrategia. Solo se considerará avanzar si la ventaja persiste con incertidumbre temporal y en segmentos posteriores.")
+        st.info("V1.13.0 no cambia TP/SL ni convierte automáticamente una hipótesis en estrategia. Solo se considerará avanzar si la ventaja persiste con incertidumbre temporal y en segmentos posteriores.")
         
         st.markdown("#### ¿Los filtros realmente filtran?")
         integ=comp.groupby(["Umbral","Dirección"]).agg(Configuraciones=("Filtro","nunique"),Min_trades=("Trades","min"),Max_trades=("Trades","max"),Min_expectativa=("Expectancy R","min"),Max_expectativa=("Expectancy R","max")).reset_index()
@@ -768,10 +763,10 @@ def render():
         export_rob_blocks=st.session_state["tf_robust_blocks_oos"].copy(); export_rob_blocks["Tipo registro"]="Estabilidad bloques robustez"; export_rob_blocks["Segmento"]="OOS"
         export_tv=st.session_state["tf_temporal_oos"].copy(); export_tv["Tipo registro"]="Validación temporal MBB + benchmark aleatorio auditado + bootstrap corregido"; export_tv["Segmento"]="OOS"
         export_tw=st.session_state["tf_walk_oos"].copy(); export_tw["Tipo registro"]="Bloques cronológicos descriptivos"; export_tw["Segmento"]="OOS"
-        export_wf=st.session_state["tf_walk_forward"].copy(); export_wf["Tipo registro"]="Walk-forward expanding window V1.12.0"; export_wf["Segmento"]="OOS secuencial"
+        export_wf=st.session_state["tf_walk_forward"].copy(); export_wf["Tipo registro"]="Walk-forward expanding window V1.13.0"; export_wf["Segmento"]="OOS secuencial"
         export_all=pd.concat([export_cfg,export_oos,export_tr,export_hc,export_he,export_rd,export_ro,export_rhd,export_rho,export_edge,export_blocks,export_rob,export_rob_blocks,export_tv,export_tw,export_wf],ignore_index=True,sort=False)
-        st.download_button("Descargar diagnóstico completo V1.12.0",export_all.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_predictive_edge_v1_12_0.csv",mime="text/csv")
+        st.download_button("Descargar diagnóstico completo V1.13.0",export_all.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_predictive_edge_v1_13_0.csv",mime="text/csv")
     st.divider()
-    st.caption("V1.12.0: walk-forward expansivo selecciona por retorno neto estimado, con costes en bps y evaluación OOS separada. Benchmark aleatorio auditado; bloques cronológicos descriptivos.")
+    st.caption("V1.13.0: walk-forward expansivo selecciona por retorno neto estimado, con costes en bps y evaluación OOS separada. Benchmark aleatorio auditado; bloques cronológicos descriptivos.")
 
 render()
