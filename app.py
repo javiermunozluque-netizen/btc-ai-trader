@@ -541,7 +541,7 @@ def variant_diagnostic_validation(df,initial_train_fraction=0.50,n_folds=5,min_s
                     "Bloques con señales":int(len(g)),
                     "Media benchmark aleatorio %":float(np.average(g["Media benchmark aleatorio %"].dropna(),weights=g.loc[g["Media benchmark aleatorio %"].notna(),"Señales OOS"])) if g["Media benchmark aleatorio %"].notna().any() else np.nan,
                     "p mínimo exploratorio":float(g["p unilateral exploratorio"].min()) if g["p unilateral exploratorio"].notna().any() else np.nan
-                }),include_groups=False).reset_index()
+                })).reset_index()
             agg["Fold"]="RESUMEN variante"
             agg["Costes descontados"]=False
             agg["Nota"]="Agregado descriptivo; p mínimo no corregido por múltiples comparaciones"
