@@ -1,4 +1,4 @@
-# BUILD SYNC: 2026-10-10 V1.16.1
+# BUILD SYNC: 2026-10-13 V1.17.0
 
 import streamlit as st
 import pandas as pd
@@ -7,7 +7,7 @@ import requests
 import plotly.graph_objects as go
 from datetime import datetime, timezone, timedelta
 
-st.set_page_config(page_title="BTC AI Trader V1.16.1", page_icon="₿", layout="wide")
+st.set_page_config(page_title="BTC AI Trader V1.17.0", page_icon="₿", layout="wide")
 
 st.markdown("""<style>
 :root{--btc-accent:#f7931a}
@@ -646,6 +646,103 @@ def confirmatory_holdout_test(df, holdout_fraction=0.20, random_reps=2000, boot_
 
 
 
+
+def rolling_confirmatory_validation(df, folds=5, random_reps=1500, boot_reps=2500, seed=1717):
+    """
+    V1.17.0: pre-registered rolling evaluation of one fixed rule.
+    Score >= 7 LONG, 48h, next-open entry. No parameter selection per fold.
+    Benchmark matches observed trade counts by calendar month and enforces
+    non-overlap. Returns are gross, with no fees/slippage deducted.
+    """
+    x, sig = build_signals(df, 220)
+    n = len(x); base = 220; h = 48
+    if n - base < 2500:
+        raise ValueError("Se necesitan al menos 2.500 velas tras indicadores; descarga más histórico.")
+    score = np.asarray(sig["score"], dtype=float)
+    op = x.open.to_numpy(float); close = x.close.to_numpy(float)
+    times = pd.to_datetime(x.open_time, utc=True)
+    month = times.dt.strftime("%Y-%m").to_numpy()
+    # Initial warm-up/development is excluded; the remaining history is split
+    # into chronological evaluation folds. The rule itself stays frozen.
+    eval_start = base + max(1000, int((n-base)*0.35))
+    edges = np.linspace(eval_start, n-h-1, int(folds)+1, dtype=int)
+    rng = np.random.default_rng(seed)
+    fold_rows=[]; all_obs=[]; all_null=[]
+    trade_rows=[]
+    def ret_at(ix):
+        ix=np.asarray(ix,dtype=int)
+        return (close[ix+h]/op[ix+1]-1.0)*100.0
+    for f in range(int(folds)):
+        left=int(edges[f]); right=int(edges[f+1])
+        if right-left < h+5: continue
+        raw=np.arange(left, right, dtype=int)
+        raw=raw[(score[raw]>=7)&(op[raw+1]>0)&(close[raw+h]>0)]
+        chosen=[]; next_ok=left
+        for ix in raw:
+            if ix>=next_ok:
+                chosen.append(int(ix)); next_ok=int(ix)+h
+        chosen=np.asarray(chosen,dtype=int)
+        if len(chosen)<3:
+            fold_rows.append({"Fold":f+1,"Inicio UTC":str(times.iloc[left].date()),"Fin UTC":str(times.iloc[min(right,n-1)].date()),"Operaciones":len(chosen),"Media bruta %":float(np.mean(ret_at(chosen))) if len(chosen) else np.nan,"Benchmark medio %":np.nan,"Ventaja pp":np.nan,"p unilateral":np.nan,"Estado":"Muestra insuficiente"})
+            continue
+        obs=ret_at(chosen); all_obs.extend(obs.tolist())
+        counts={}
+        for ix in chosen: counts[month[ix]]=counts.get(month[ix],0)+1
+        pools={}
+        for ix in range(left, min(right,n-h-1)):
+            if op[ix+1]>0 and close[ix+h]>0:
+                pools.setdefault(month[ix],[]).append(ix)
+        pool_arrays={k:np.asarray(v,dtype=int) for k,v in pools.items()}
+        null=[]; attempts=0; max_attempts=int(random_reps)*20
+        while len(null)<int(random_reps) and attempts<max_attempts:
+            attempts+=1; parts=[]; feasible=True
+            for m,need in counts.items():
+                pool=pool_arrays.get(m,np.asarray([],dtype=int))
+                if len(pool)<need: feasible=False; break
+                parts.append(rng.choice(pool,size=need,replace=False))
+            if not feasible: continue
+            pick=np.sort(np.concatenate(parts))
+            if len(pick)>1 and np.any(np.diff(pick)<h): continue
+            null.append(float(np.mean(ret_at(pick))))
+        if len(null)<max(100,int(random_reps)*0.1):
+            bench=np.nan; adv=np.nan; pval=np.nan; status="Benchmark comparable insuficiente"
+        else:
+            null=np.asarray(null); all_null.extend(null.tolist())
+            bench=float(np.mean(null)); adv=float(np.mean(obs)-bench)
+            pval=float((1+np.sum(null>=np.mean(obs)))/(len(null)+1))
+            status="Evaluado"
+        fold_rows.append({"Fold":f+1,"Inicio UTC":str(times.iloc[left].date()),"Fin UTC":str(times.iloc[min(right,n-1)].date()),"Operaciones":len(obs),"Media bruta %":float(np.mean(obs)),"Mediana bruta %":float(np.median(obs)),"Win rate %":float(np.mean(obs>0)*100),"Benchmark medio %":bench,"Ventaja pp":adv,"p unilateral":pval,"Réplicas válidas":len(null) if isinstance(null,np.ndarray) else len(null),"Estado":status})
+        for ix,rr in zip(chosen,obs):
+            trade_rows.append({"Fold":f+1,"Entrada UTC":times.iloc[ix+1],"Salida UTC":times.iloc[ix+h],"Score":int(score[ix]),"Precio entrada":float(op[ix+1]),"Precio salida":float(close[ix+h]),"Retorno bruto %":float(rr),"Horizonte (h)":h})
+    obs=np.asarray(all_obs,dtype=float)
+    if len(obs)<10: raise ValueError(f"Solo hay {len(obs)} operaciones válidas en los folds; se necesitan al menos 10 para resumir.")
+    # Circular moving-block bootstrap retains short-range dependence.
+    block=min(3,max(1,len(obs)//2)); boot=np.empty(int(boot_reps))
+    for b in range(int(boot_reps)):
+        vals=[]
+        while len(vals)<len(obs):
+            st0=int(rng.integers(0,len(obs)))
+            vals.extend(obs[(st0+np.arange(block))%len(obs)].tolist())
+        boot[b]=np.mean(vals[:len(obs)])
+    lo,hi=np.percentile(boot,[2.5,97.5])
+    valid_null=np.asarray(all_null,dtype=float)
+    # Combined p is not pooled from fold means: compare aggregate observed mean
+    # against an aggregate null distribution built from fold-wise matched draws.
+    # Report fold p-values separately; aggregate p is deliberately omitted.
+    summary=pd.DataFrame([{
+        "Hipótesis congelada":"Score >= 7 LONG · 48h · next-open",
+        "Periodo evaluado desde":str(times.iloc[eval_start].date()),
+        "Operaciones evaluadas":int(len(obs)),
+        "Media bruta %":float(np.mean(obs)),
+        "Mediana bruta %":float(np.median(obs)),
+        "Win rate %":float(np.mean(obs>0)*100),
+        "MBB IC95 inferior %":float(lo),"MBB IC95 superior %":float(hi),
+        "Costes descontados":"No · retorno bruto",
+        "Interpretación":"Consistente con retorno positivo (no prueba edge)" if lo>0 else "No hay evidencia robusta de retorno medio positivo"
+    }])
+    return summary, pd.DataFrame(fold_rows), pd.DataFrame(trade_rows)
+
+
 def temporal_validation(df,start_index=220,boot_n=4000,seed=1102,block_len=3):
     """
     V1.15.0: audited temporal validation with genuinely randomized benchmark sets.
@@ -788,7 +885,7 @@ def current_data(symbol):
 
 def render():
     st.title("₿ BTC AI Trader")
-    st.caption("V1.16.1 · Confirmatory Holdout Research · Technical research only · No order execution")
+    st.caption("V1.17.0 · Rolling confirmatory validation · Technical research only · No order execution")
     with st.sidebar:
         st.header("Parámetros")
         symbol=st.text_input("Símbolo","BTCUSDT")
@@ -806,6 +903,41 @@ def render():
     elif score<=-6:st.error("Sesgo SHORT")
     else:st.info("WAIT · sin señal operativa")
 
+    st.divider()
+    st.markdown("### V1.17.0 · Validación cronológica ampliada")
+    st.caption("Regla congelada antes de evaluar: Score ≥ 7 LONG, horizonte 48h, entrada en apertura siguiente. Se evalúa en cinco bloques cronológicos consecutivos; no se seleccionan parámetros por bloque. Benchmark por mes y sin operaciones solapadas. Retornos brutos, sin costes.")
+    if st.button("Ejecutar validación ampliada V1.17.0", type="primary"):
+        try:
+            with st.spinner("Descargando hasta cinco años de velas y validando los bloques cronológicos…"):
+                end=int(datetime.now(timezone.utc).timestamp()*1000)
+                start=int((datetime.now(timezone.utc)-timedelta(days=365*5)).timestamp()*1000)
+                hist_v17=paginate_klines(symbol,"1h",start,end,43800)
+                if hist_v17.empty or len(hist_v17)<3000:
+                    raise ValueError(f"Histórico insuficiente: {len(hist_v17)} velas. Se necesitan al menos 3.000.")
+                summary_v17, folds_v17, trades_v17 = rolling_confirmatory_validation(hist_v17,folds=5,random_reps=1500,boot_reps=2500,seed=1717)
+                st.session_state["v17_summary"]=summary_v17
+                st.session_state["v17_folds"]=folds_v17
+                st.session_state["v17_trades"]=trades_v17
+                st.session_state["v17_history_count"]=len(hist_v17)
+                st.session_state.pop("v17_error",None)
+        except Exception as e:
+            st.session_state["v17_error"]=f"{type(e).__name__}: {e}"
+    if st.session_state.get("v17_error"):
+        st.error(st.session_state["v17_error"])
+    if "v17_summary" in st.session_state:
+        st.caption(f"Histórico utilizado: {st.session_state['v17_history_count']:,} velas de 1H.")
+        st.markdown("#### Resumen agregado de los bloques evaluados")
+        st.dataframe(st.session_state["v17_summary"].round(4),use_container_width=True,hide_index=True)
+        st.markdown("#### Resultados por bloque cronológico")
+        st.dataframe(st.session_state["v17_folds"].round(4),use_container_width=True,hide_index=True)
+        st.markdown("#### Operaciones individuales")
+        st.dataframe(st.session_state["v17_trades"].round(4),use_container_width=True,hide_index=True)
+        export_v17=pd.concat([
+            st.session_state["v17_summary"].assign(Tipo="Resumen"),
+            st.session_state["v17_folds"].assign(Tipo="Bloque cronológico"),
+            st.session_state["v17_trades"].assign(Tipo="Operación")
+        ],ignore_index=True,sort=False)
+        st.download_button("Descargar validación V1.17.0 completa",export_v17.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_validation_v1_17_0.csv",mime="text/csv")
     st.divider()
     st.markdown("### Backtest y validación")
     if st.button("Ejecutar validación confirmatoria V1.16.1",type="primary"):
@@ -997,8 +1129,8 @@ def render():
         export_wf=st.session_state["tf_walk_forward"].copy(); export_wf["Tipo registro"]="Walk-forward expanding window V1.15.0"; export_wf["Segmento"]="OOS secuencial"
         export_vd=st.session_state["tf_variant_diagnostic"].copy(); export_vd["Tipo registro"]="Diagnóstico estadístico variantes V1.15.0"; export_vd["Segmento"]="OOS por variante"
         export_all=pd.concat([export_cfg,export_oos,export_tr,export_hc,export_he,export_rd,export_ro,export_rhd,export_rho,export_edge,export_blocks,export_rob,export_rob_blocks,export_tv,export_tw,export_wf,export_vd],ignore_index=True,sort=False)
-        st.download_button("Descargar diagnóstico completo V1.16.0",export_all.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_predictive_edge_v1_16_1.csv",mime="text/csv")
+        st.download_button("Descargar diagnóstico completo V1.17.0",export_all.to_csv(index=False).encode("utf-8"),file_name="btc_ai_trader_predictive_edge_v1_17_0.csv",mime="text/csv")
     st.divider()
-    st.caption("V1.16.1: incorpora una prueba confirmatoria única sobre el último 20% cronológico reservado. Test bruto sin costes; el benchmark iguala recuento mensual, horizonte y no solapamiento. La validación no garantiza resultados futuros.")
+    st.caption("V1.17.0 añade validación cronológica ampliada de una regla congelada, con benchmark por mes y operaciones no solapadas. El diagnóstico histórico anterior se mantiene separado. Ninguna prueba garantiza resultados futuros.")
 
 render()
